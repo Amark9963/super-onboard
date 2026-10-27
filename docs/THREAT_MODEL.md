@@ -1,0 +1,32 @@
+# M0 threat assumptions
+
+This is a local development scaffold, not an internet-ready deployment. Compose binds published ports to loopback. Its example database/storage credentials are development-only. The API exposes no customer records and the seeded contacts use reserved `example.invalid` addresses.
+
+| Boundary / risk | M0 protection | Required before product exposure |
+|---|---|---|
+| Cross-project reads and writes | Membership repository guard, composite project foreign keys, rejection tests | M1 authenticated identity on every route, role checks, file access authorization |
+| Bearer link leakage | Random secret primitive, hash-only schema, explicit invitation items | M3 expiry/revocation checks, rate limiting, no-referrer, no analytics, redacted access logs, CSRF analysis |
+| Policy tampering | Separate proposals, confirmations and staff reviews; immutable history triggers | Transactional approval predicates and fresh confirmation for revisions |
+| Duplicate customer answers | Unique invitation/item/submission ID | M3 replay-safe API returning original result |
+| Uploaded or fetched hostile content | No ingestion or fetching surface in M0 | M1 size/type limits, private object keys; M5 public-IP validation on all redirects/DNS resolution, bounded fetches, no instruction execution |
+| Prompt injection / invented evidence | Mock never approves; no executable AI output | M2 typed extraction and deterministic citation verification |
+| Secret / customer-data logging | Health errors contain no database details; synthetic seed only | Structured redaction, token route logging controls, provider payload minimization |
+| Historical overwrite | Database triggers on immutable records | M4 transactionally freeze approved baselines, calculate export staleness |
+
+Database credentials are privileged development credentials. Direct database operators can bypass application semantics; M0 does not claim protection against a malicious database owner. Status fields alone never constitute approval. Customer-link actors are unverified capability holders, not verified identities or legal signatures.
+
+No automatic retention/deletion runs. `docker compose down` preserves named volumes. Deleting volumes is destructive and must be deliberate. Future admin project deletion needs a dedicated, audited purge transaction compatible with immutable-history triggers; do not disable those triggers in ordinary application writes. Backups and copies require separate operator retention decisions.
+
+Production requires TLS, secret management, authenticated access, least-privilege DB/storage identities, maintained dependencies, network controls, backups and restore verification. Third-party AI disclosure and provider credentials are future deployment configuration, not enabled by default.
+
+## M2 additions
+
+| Boundary / risk | M2 protection | Remaining |
+|---|---|---|
+| Prompt injection / invented evidence | Document text is sent as data with a system prompt saying so; output must match a typed schema with no review/confirmation fields; every citation is checked against stored blocks of the extracted source version; failures are flagged and cannot be accepted or drive conflicts; output is never executed | Verification proves a quote exists, not that the statement is faithful or current; staff must read the evidence |
+| Third-party AI disclosure | Live provider is off unless the deployer sets `AI_API_KEY`; each live job needs explicit staff acknowledgement; only one source version's blocks plus property/portfolio names are sent | Deployer must disclose processing to customers and vet the provider; no payload redaction beyond minimization |
+| Provider secrets and content in logs | Errors reduce to content-free codes; response bodies, document text and the key are never stored in job rows or audit details | Verify deployment log pipelines do not capture request bodies |
+| Silent rewriting of the AI proposal | `ai_proposal` is write-once by trigger; edits are audited with before/after and keep evidence | Direct database operators remain trusted |
+| Staff review mistaken for approval | Accept means "accepted for customer review"; API reports `approval_status: not_approved`; no route changes customer confirmation | M3/M4 must implement confirmation and the approval transition service |
+| Cross-project references via new routes | Every route checks membership and filters by project; duplicate targets, scopes, source versions and conflict ids from another project return 404 | M5 hardening review |
+| Runaway or abusive extraction | One active job per source version, bounded attempts, per-job candidate and batch caps, stale-claim recovery | No per-user rate limit or provider spend cap |
