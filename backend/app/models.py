@@ -246,6 +246,8 @@ class RequirementDuplicate(ProjectBound, Base):
 class ReviewRequest(ProjectBound, Base):
     __tablename__ = "review_requests"
     title: Mapped[str] = mapped_column(String(200))
+    message: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[str | None] = mapped_column(String(36))
     __table_args__ = scoped()
 
 
@@ -255,6 +257,7 @@ class ClarificationQuestion(ProjectBound, Base):
     text: Mapped[str] = mapped_column(Text)
     answer_type: Mapped[str] = mapped_column(String(30), default="free_text")
     choices: Mapped[list] = mapped_column(JSON, default=list)
+    conflict_id: Mapped[str | None] = mapped_column(String(36))
     __table_args__ = scoped(("requirement_version_id", "requirement_versions"))
 
 
@@ -278,6 +281,14 @@ class ReviewInvitation(ProjectBound, Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     revoked: Mapped[bool] = mapped_column(Boolean, default=False)
     delivery_state: Mapped[str] = mapped_column(String(30), default="draft")
+    # M3 lifecycle: draft (activated_at is null) -> active -> expired | revoked.
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    opened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    delivery_error: Mapped[str | None] = mapped_column(String(100))
+    replaces_id: Mapped[str | None] = mapped_column(String(36))
+    created_by: Mapped[str | None] = mapped_column(String(36))
     __table_args__ = scoped(
         ("request_id", "review_requests"),
         ("contact_id", "customer_contacts"),
@@ -348,6 +359,10 @@ class CustomerConfirmation(ProjectBound, Base):
     __table_args__ = scoped(
         ("requirement_version_id", "requirement_versions"),
         ("response_id", "customer_response_versions"),
+    ) + (
+        Index(
+            "uq_customer_confirmation_version", "project_id", "requirement_version_id", unique=True
+        ),
     )
 
 
@@ -357,6 +372,7 @@ class StaffReview(ProjectBound, Base):
     reviewer_id: Mapped[str] = mapped_column(ForeignKey("internal_users.id"))
     decision: Mapped[str] = mapped_column(String(30))
     rationale: Mapped[str] = mapped_column(Text)
+    response_id: Mapped[str | None] = mapped_column(String(36))
     __table_args__ = scoped(("requirement_version_id", "requirement_versions")) + (
         ForeignKeyConstraint(
             ["project_id", "reviewer_id"],

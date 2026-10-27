@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api } from "./api";
+import { CustomerPanel } from "./customer";
 import { ReviewWorkspace } from "./review";
 
 type User = { id: string; email: string; role: string; csrf_token: string };
@@ -229,7 +230,7 @@ export default function Workspace() {
         <div className="brand">
           SUPER <span>ONBOARD</span>
         </div>
-        <p className="eyebrow">WORKSPACE · MILESTONE 2</p>
+        <p className="eyebrow">WORKSPACE · MILESTONE 3</p>
         <div className="sidebar-heading">Projects</div>
         <button
           className={`nav-item ${!project ? "active" : ""}`}
@@ -782,6 +783,12 @@ export default function Workspace() {
               sources={sources}
               properties={properties}
               portfolios={portfolios}
+              onError={setError}
+            />
+            <CustomerPanel
+              projectId={project.id}
+              csrf={user.csrf_token}
+              contacts={contacts}
               onError={setError}
             />
             {selectedVersion && (

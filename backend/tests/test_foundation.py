@@ -297,7 +297,7 @@ def test_confirmed_requirement_is_immutable(session):
 def test_health_and_no_business_routes(engine, monkeypatch):
     monkeypatch.setattr(main, "engine", engine)
     client = TestClient(main.app)
-    assert client.get("/health/live").json() == {"status": "ok", "milestone": 2}
+    assert client.get("/health/live").json() == {"status": "ok", "milestone": 3}
     assert client.get("/health/ready").status_code == 200
     assert client.get("/api/projects").status_code == 401
     with engine.begin() as connection:
@@ -308,4 +308,4 @@ def test_health_and_no_business_routes(engine, monkeypatch):
         connection.execute(
             text("CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL PRIMARY KEY)")
         )
-        connection.execute(text("INSERT INTO alembic_version VALUES ('0004')"))
+        connection.execute(text("INSERT INTO alembic_version VALUES ('0005')"))

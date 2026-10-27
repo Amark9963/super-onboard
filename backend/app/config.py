@@ -13,6 +13,16 @@ class Settings(BaseSettings):
     ai_batch_chars: int = 12000
     extraction_stale_minutes: int = 10
     app_origin: str = "http://localhost:3000"
+    # Base URL used in customer review links; defaults to the app origin.
+    public_base_url: str | None = None
+    smtp_host: str = "localhost"
+    smtp_port: int = 1025
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    smtp_starttls: bool = False
+    smtp_from: str = "Implementation team <onboard@example.invalid>"
+    smtp_timeout_seconds: int = 10
+    invitation_default_days: int = 7
     cookie_secure: bool = False
     session_hours: int = 8
     s3_endpoint: str = "http://localhost:9000"

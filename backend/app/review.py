@@ -14,6 +14,7 @@ from app.ai import Category, provider_options, slug
 from app.api import Input, project_access, scoped_object
 from app.auth import DB, User
 from app.conflicts import SEVERITY_ORDER, refresh_conflicts
+from app.invitations import open_invitation_lock
 from app.models import (
     AuditEvent,
     CandidateProvenance,
@@ -211,8 +212,13 @@ def candidate_json(version, title, provenance, duplicate, names):
         "customer_confirmation_state": version.customer_confirmation_state,
         "approval_status": "not_approved",
         "duplicate_of": duplicate.canonical_version_id if duplicate else None,
-        "simulated": provenance.simulated if provenance else None,
-        "provider": provenance.provider if provenance else None,
+        # Revisions keep the original proposal's labels even though they have no provenance row.
+        "simulated": provenance.simulated
+        if provenance
+        else (version.ai_proposal or {}).get("simulated"),
+        "provider": provenance.provider
+        if provenance
+        else (version.ai_proposal or {}).get("provider"),
         "created_at": version.created_at,
     }
 
@@ -542,6 +548,15 @@ def require_open_for_staff(version, duplicate, *, allow_rejected=False):
         raise HTTPException(409, "Reopen this candidate before changing it")
 
 
+def ensure_unlocked(db, project_id, version):
+    if open_invitation_lock(db, project_id, version.id):
+        raise HTTPException(
+            409,
+            "An active customer review link includes this wording. Revoke the invitation or "
+            "wait for it to expire before changing the candidate.",
+        )
+
+
 def staff_decision(db, project_id, user, version, decision, rationale):
     db.add(
         StaffReview(
@@ -567,6 +582,7 @@ def edit_requirement(project_id: str, version_id: str, data: CandidateEdit, db: 
     project_access(db, user, project_id)
     version = lock_candidate(db, project_id, version_id)
     require_open_for_staff(version, duplicate_row(db, version.id))
+    ensure_unlocked(db, project_id, version)
     requirement = scoped_object(db, Requirement, project_id, version.requirement_id)
     changes = {}
     sent = data.model_fields_set
@@ -637,6 +653,7 @@ def accept_requirement(project_id: str, version_id: str, data: AcceptInput, db: 
     project_access(db, user, project_id)
     version = lock_candidate(db, project_id, version_id)
     require_open_for_staff(version, duplicate_row(db, version.id))
+    ensure_unlocked(db, project_id, version)
     if version.staff_review_state != "pending":
         raise HTTPException(409, "Only pending candidates can be accepted for customer review")
     if version.evidence_status != "verified":
@@ -659,6 +676,7 @@ def reject_requirement(project_id: str, version_id: str, data: ReasonInput, db: 
     project_access(db, user, project_id)
     version = lock_candidate(db, project_id, version_id)
     require_open_for_staff(version, duplicate_row(db, version.id))
+    ensure_unlocked(db, project_id, version)
     version.staff_review_state = "rejected"
     staff_decision(db, project_id, user, version, "candidate_rejected", data.reason)
     db.flush()
@@ -674,6 +692,7 @@ def reopen_requirement(
     project_access(db, user, project_id)
     version = lock_candidate(db, project_id, version_id)
     require_open_for_staff(version, duplicate_row(db, version.id), allow_rejected=True)
+    ensure_unlocked(db, project_id, version)
     if version.staff_review_state == "pending":
         raise HTTPException(409, "Candidate is already awaiting review")
     version.staff_review_state = "pending"
@@ -691,10 +710,12 @@ def fold_into(db, project_id, user, version_id, data, kind):
     version = lock_candidate(db, project_id, version_id)
     canonical = lock_candidate(db, project_id, data.canonical_id)
     require_open_for_staff(version, duplicate_row(db, version.id))
+    ensure_unlocked(db, project_id, version)
     if canonical.staff_review_state == "rejected" or duplicate_row(db, canonical.id):
         raise HTTPException(409, "The target candidate must be live (not rejected or duplicate)")
     if canonical.customer_confirmation_state != "not_confirmed":
         raise HTTPException(409, "Confirmed revisions cannot be changed")
+    ensure_unlocked(db, project_id, canonical)
     if kind == "merged" and (
         (version.scope_type, version.property_id, version.portfolio_id)
         != (canonical.scope_type, canonical.property_id, canonical.portfolio_id)

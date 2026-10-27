@@ -7,13 +7,13 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
-from app import main
+from app import main, worker
 from app.auth import get_db, password_hash
 from app.config import settings
 from app.models import InternalUser
 from app.seed import key, seed
 from app.storage import get_store
-from tests.support import MemoryStore
+from tests.support import MemoryStore, Staff, sign_in
 
 
 @pytest.fixture
@@ -68,3 +68,10 @@ def client(engine):
     with TestClient(main.app) as client:
         yield client, factory, memory
     main.app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def staff(client, monkeypatch):
+    web, factory, memory = client
+    monkeypatch.setattr(worker, "SessionLocal", factory)
+    return Staff(web, factory, memory, sign_in(web))

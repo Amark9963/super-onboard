@@ -70,3 +70,29 @@ The local app is running at http://localhost:3000 with the M2 build, the fiction
 - **Not claimed:** live AI extraction. The live adapter was only exercised against a stubbed transport and has never contacted a real model, so no live extraction quality is claimed. All walkthrough results come from the SIMULATED keyword mock and say nothing about AI quality.
 - "Verified" evidence means the quote exists at the cited location, not that the statement is faithful, current, or customer-approved. No M3–M5 workflow (customer clarification, invitations, confirmation, approval, blueprints, test plans, website import) exists. CI has not been run on GitHub. The Starlette test-client deprecation warning remains non-failing.
 - Observed M1 behavior, unchanged: the login throttle counts successful sign-ins, so ten scripted sign-ins in 15 minutes lock the demo account until the window expires.
+
+# M3 verification — 2026-10-28
+
+## Passed
+
+- Backend: **65 tests passed on SQLite and the same 65 on PostgreSQL 17** in Compose (50 earlier plus 15 for M3). M3 coverage:
+  - Composer: only accepted, verified, scope-confirmed, unconfirmed candidates; excerpts limited to the requirement's own verified evidence; question/choice validation; the preview carries no project, requirement or evidence ids, AI labels or staff emails.
+  - Links and email: the token is stored only as a SHA-256 hash and never appears in audit details or listings; link returned once; SMTP accepted / failed / link-only states recorded honestly with a content-free error code; email text excludes rule content and sanitizes the subject; the SMTP adapter maps failures without leaking.
+  - Public routes: token scope to exactly the invited items (another invitation's items cannot be answered); no internal session needed or honored; unknown and malformed tokens return an identical 404; no-referrer, no-store and noindex headers; the opened event is audited once by a `customer_link` actor referencing the invitation; the rate limiter counts and resets.
+  - Lifecycle: revoke, server-side expiry, resend (old link 410, earlier answers carried over, a resent link works after confirmation with the confirmed item locked), draft refusal of changed wording, and an edit/reject/reopen/duplicate/merge lock while a link is live.
+  - Responses: partial submission, idempotent replay (no duplicate row, first write wins), amendments as new versions, whole-request atomic validation, and rejection of wrong response types, wrong or unknown fields, non-offered choices, oversize comments and empty corrections.
+  - Confirmation: a customer confirm leaves the requirement unconfirmed; staff cannot validate non-confirmations; validation writes the confirmation with the snapshot wording, freezes the version at the database, and audits "bearer review link"; a rejected confirmation can be replaced by an amended response and older responses cannot be validated; drifted wording is refused; correction requests create a superseding revision that needs fresh acceptance and confirmation.
+  - Isolation: every new staff route returns 404 for a non-member and for ids from another project, including through the caller's own project.
+- Backend: Ruff lint/format (also inside Compose); Alembic upgrade/downgrade and drift check; the live database migrated to `0005`.
+- Frontend: Prettier, ESLint, TypeScript and the production build (image build); the HTTP test passed against the running container.
+- Full Compose rebuild healthy (backend now runs with `--no-access-log`). Live `smoke.py`, `m1_e2e.py`, `m2_e2e.py` and the new `m3_e2e.py` all pass. `m3_e2e.py` sends a real invitation through Mailpit, confirms the emailed link equals the issued link and omits rule text, then as a cookie-less customer loads the page, answers partially, replays a submission, answers the rest, and as staff validates the confirmation, sees the item locked, resends (old link 410), revokes, and confirms logout. It ran three times against the live stack.
+- A real bug was found by the live run and fixed with a regression test: resending a link after a rule was confirmed failed because the resend re-checked eligibility; confirmed items now carry over locked.
+- Visual inspection in Chrome: the customer page at 390px (no horizontal overflow, no external requests, empty `document.referrer`, no script errors, partial save banner) and the staff composer/inbox. A misleading empty-state flash in the staff panels was replaced with a loading state.
+
+## Scope and limits
+
+- Bearer links only; recipient identity is never verified and audit text says so. No OTP, no legal signature or consent claim.
+- Email is sent synchronously with no retry queue, bounce handling, or reminders. SMTP acceptance is not delivery. Only Mailpit was exercised; no real SMTP relay was tested.
+- `customer_confirmation_state = confirmed` means a customer confirmation was recorded and staff-validated. Nothing in M3 approves a rule for a blueprint, and conflicts are still never marked resolved (M4).
+- Rate limiting is per token plus a global invalid-token bucket, not per client IP. Any project member can validate confirmations; role-based sign-off is M4.
+- Live AI extraction quality is still unmeasured (see M2). CI has not been run on GitHub. M3 work is not committed.
