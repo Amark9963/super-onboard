@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     web_max_redirects: int = 3
     # Number of trusted reverse proxies in front of the API; 0 ignores X-Forwarded-For.
     trusted_proxy_hops: int = 0
+    # Per client address, per 15 minutes (counters are shared by all API processes).
+    rate_limit_public_per_ip: int = 300
+    rate_limit_login_per_ip: int = 40
     session_hours: int = 8
     s3_endpoint: str = "http://localhost:9000"
     s3_bucket: str = "onboard-private"

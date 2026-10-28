@@ -8,13 +8,15 @@ the audit trail is an unverified capability holder, not a verified person.
 import re
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import Field
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
 from app.api import Input
 from app.auth import DB
+from app.clientip import client_ip
+from app.config import settings
 from app.invitations import customer_view, item_locked, now, status
 from app.models import (
     AuditEvent,
@@ -53,7 +55,15 @@ class SubmitIn(Input):
     responses: list[ResponseIn] = Field(min_length=1, max_length=50)
 
 
-def resolve(db, token: str) -> ReviewInvitation:
+def resolve(db, token: str, request: Request) -> ReviewInvitation:
+    # One client cannot probe tokens (or hammer a valid one) faster than this, whatever it presents.
+    throttle(
+        db,
+        f"public-ip:{client_ip(request)}",
+        settings.rate_limit_public_per_ip,
+        15,
+        "Too many requests. Try again later.",
+    )
     invitation = None
     if re.fullmatch(r"[A-Za-z0-9_-]{20,100}", token):
         invitation = db.scalar(
@@ -83,9 +93,9 @@ def customer_audit(db, invitation, action, target, detail=None):
 
 
 @router.get("/review/{token}")
-def view(token: str, response: Response, db: DB):
+def view(token: str, request: Request, response: Response, db: DB):
     response.headers["X-Robots-Tag"] = "noindex, nofollow"
-    invitation = resolve(db, token)
+    invitation = resolve(db, token, request)
     if invitation.opened_at is None:
         invitation.opened_at = now()
         customer_audit(db, invitation, "invitation.opened", invitation.id)
@@ -203,9 +213,9 @@ def save(db, invitation, data: SubmitIn):
 
 
 @router.post("/review/{token}/responses")
-def submit(token: str, data: SubmitIn, response: Response, db: DB):
+def submit(token: str, data: SubmitIn, request: Request, response: Response, db: DB):
     response.headers["X-Robots-Tag"] = "noindex, nofollow"
-    invitation = resolve(db, token)
+    invitation = resolve(db, token, request)
     for attempt in range(3):
         try:
             plan = save(db, invitation, data)

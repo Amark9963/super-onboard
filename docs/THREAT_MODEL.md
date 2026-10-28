@@ -56,3 +56,17 @@ Production requires TLS, secret management, authenticated access, least-privileg
 | Exports implying a live agent or legal consent | Every export and the readiness note say they are documents only; confirmations are labeled "confirmed via bearer review link; recipient identity not verified" | Downstream users must not treat them as signatures |
 | Cross-project output access | All new routes check membership and fetch by `project_id`; outsiders get 404 for readiness, approvals, audit, artifacts, exports, generation, resolution, revisions | M5 hardening review |
 | Untracked data egress | Generation and each export download are audited with the actor | Exports contain customer rule text and source quotes; handle downloads accordingly |
+
+## M5 additions
+
+| Boundary / risk | M5 protection | Remaining |
+|---|---|---|
+| SSRF through website import | Scheme/credential/port/hostname policy; every DNS answer must be public and the connection is pinned to the validated address (no rebinding); each redirect hop re-validated and kept in scope; numeric/hex host spellings and internal names refused; no cookies or credentials sent | The system resolver is trusted; no DNSSEC; the dev-only private-host allowlist must stay empty in production (`compose.prod.yaml` forces it) |
+| Hostile or oversized responses | Identity encoding only, byte caps with and without `Content-Length`, per-read and total deadlines, text/HTML only, 5 MB and 25-page limits, one request at a time with a delay | A cooperative-but-large site can still consume its full budget per import |
+| Prompt injection via page text | Scripts and hidden text are dropped before blocks exist; page text is data for the model; citations are verified against stored blocks; nothing a page says can set a review or approval state | Visible text can still try to mislead a model; staff review and customer confirmation remain the safeguards |
+| Crawler misbehavior | RFC 9309 robots matching with conservative failure handling; identifying user agent; scoped to the entered site (+ approved subdomains) | `crawl-delay` is not read; no per-site rate adaptation |
+| Hostile sitemaps | `defusedxml` with DTD/entity/external-entity rejection, 2 MB and 500-URL caps | |
+| Public-route and sign-in guessing | Per-client-address limits in addition to per-token/account; client address trusts `X-Forwarded-For` only as many proxies deep as declared | Shared NAT addresses share a budget; counters are in the main database |
+| Vulnerable dependencies | `pip-audit` and `npm audit --omit=dev` run clean at the verified state; upgraded `pypdf`, `python-multipart`, `pydantic-settings`; bandit clean at medium+ | Needs recurring scans (CI does not run them yet) |
+| Container breakout/escalation | Backend image runs as an unprivileged user; production publishes only Caddy's 80/443 | Frontend image already ran as `node`; no read-only root filesystem or seccomp profile is configured |
+| Data loss | `backup.sh` (verified object mirror) and `restore_check.py` (restore into a scratch database, compare revision, row counts, triggers) | Object-store restore is documented, not scripted; no scheduled backups; no project deletion procedure yet |

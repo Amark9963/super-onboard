@@ -822,9 +822,9 @@ label.choice input {
 }
 
 /* M5: website import */
-.status.blocked,
-.status.failed,
-.status.queued,
+.status.pg-blocked,
+.status.pg-failed,
+.status.pg-queued,
 .status.discovering,
 .status.importing,
 .status.discover_pending,
@@ -832,12 +832,13 @@ label.choice input {
   background: #fff2ce;
   color: #765617;
 }
-.status.failed,
-.status.blocked {
+.status.pg-failed,
+.status.pg-blocked {
   background: #ffe8db;
   color: #9b4931;
 }
-.status.candidate {
+.status.pg-candidate,
+.status.pg-queued {
   background: #eef1ee;
   color: #435449;
 }

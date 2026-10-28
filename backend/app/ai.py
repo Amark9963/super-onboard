@@ -8,6 +8,7 @@ citations are checked against stored source blocks before it is persisted (see `
 import json
 import re
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from typing import Annotated, Literal, Protocol
@@ -312,9 +313,12 @@ def wire_schema() -> dict:
 
 
 def default_transport(url, headers, body, timeout):
+    if urllib.parse.urlsplit(url).scheme not in {"http", "https"}:
+        raise ProviderError("provider_not_configured", False)  # never file:// or custom schemes
     request = urllib.request.Request(url, data=body, headers=headers, method="POST")
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+        # The URL is deployer configuration, not user input, and its scheme was checked above.
+        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310  # nosec B310
             return response.status, response.read()
     except urllib.error.HTTPError as error:
         return error.code, b""
@@ -337,6 +341,8 @@ class OpenAICompatibleProvider:
     def extract(self, request: ExtractionRequest) -> Extraction:
         if not settings.ai_api_key:
             raise ProviderError("provider_not_configured", False)
+        if urllib.parse.urlsplit(settings.ai_base_url).scheme not in {"http", "https"}:
+            raise ProviderError("provider_not_configured", False)  # never file:// or custom schemes
         payload = {
             "properties": [{"id": i, "name": n} for i, n in request.properties],
             "portfolios": [{"id": i, "name": n} for i, n in request.portfolios],

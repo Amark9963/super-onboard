@@ -11,9 +11,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from app.clientip import client_ip
 from app.config import settings
 from app.db import SessionLocal
 from app.models import InternalSession, InternalUser, LoginThrottle
+from app.ratelimit import throttle
 from app.tokens import hash_token, new_token
 
 router = APIRouter(prefix="/api/auth", tags=["authentication"])
@@ -110,6 +112,14 @@ def login_limit(db: Session, key: str):
 @router.post("/login")
 def login(data: LoginInput, request: Request, response: Response, db: DB):
     check_origin(request)
+    # Per-address limit first, so one client cannot spray guesses across many accounts.
+    throttle(
+        db,
+        f"login-ip:{client_ip(request)}",
+        settings.rate_limit_login_per_ip,
+        15,
+        "Too many sign-in attempts. Try again in 15 minutes.",
+    )
     email = data.email.strip().lower()
     login_limit(db, hash_token("account:" + email))
     user = db.scalar(select(InternalUser).where(InternalUser.email == email))

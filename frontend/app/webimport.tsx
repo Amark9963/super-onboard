@@ -276,7 +276,7 @@ export function WebImportPanel(props: {
               )}
               <strong>{p.title || "(untitled)"}</strong>
               <small>{p.url}</small>
-              <span className={`status ${p.status}`}>{p.status}</span>
+              <span className={`status pg-${p.status}`}>{p.status}</span>
               {p.reason && (
                 <span className="error-code">{words(p.reason)}</span>
               )}

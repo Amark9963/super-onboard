@@ -1,0 +1,18 @@
+# TLS-terminating reverse proxy for production (see compose.prod.yaml and docs/DEPLOYMENT.md).
+# Caddy obtains and renews a certificate for {$DOMAIN} automatically; ports 80 and 443 must be
+# reachable from the internet and the DNS name must point at this host.
+{$DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+
+	# Caddy overwrites any X-Forwarded-For a client sends, then the web container appends this
+	# proxy's address. With TRUSTED_PROXY_HOPS=2 the API therefore reads the real client address
+	# from the entry two places from the right.
+	reverse_proxy frontend:3000 {
+		header_up X-Forwarded-For {remote_host}
+	}
+}

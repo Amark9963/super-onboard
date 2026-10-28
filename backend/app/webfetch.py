@@ -485,11 +485,16 @@ def parse_sitemap(body: bytes) -> tuple[list[str], list[str]]:
     lowered = body[:4096].lower()
     if b"<!doctype" in lowered or b"<!entity" in body[:65536].lower():
         raise FetchError("unsafe_xml")
-    import xml.etree.ElementTree as ET
+    from xml.etree.ElementTree import ParseError
+
+    from defusedxml import ElementTree as SafeET
+    from defusedxml.common import DefusedXmlException
 
     try:
-        root = ET.fromstring(body)
-    except ET.ParseError:
+        root = SafeET.fromstring(body, forbid_dtd=True, forbid_entities=True, forbid_external=True)
+    except DefusedXmlException:
+        raise FetchError("unsafe_xml") from None
+    except ParseError:
         raise FetchError("invalid_sitemap") from None
     pages, nested = [], []
     for element in root.iter():

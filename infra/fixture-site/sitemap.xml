@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>http://fixture-site:8080/hours/</loc></url>
+  <url><loc>http://fixture-site:8080/faq/</loc></url>
+  <url><loc>http://fixture-site:8080/private/</loc></url>
+</urlset>

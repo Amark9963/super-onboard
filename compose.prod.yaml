@@ -1,0 +1,75 @@
+# Production overrides for compose.yaml. See docs/DEPLOYMENT.md before using.
+#
+#   docker compose -f compose.yaml -f compose.prod.yaml --env-file .env.prod up -d --build
+#
+# What this changes compared with the local development stack:
+#   * no ports are published except 80/443 on the TLS proxy (Caddy);
+#   * database and storage passwords are REQUIRED (no development defaults);
+#   * cookies are Secure and the public origin is https://$DOMAIN;
+#   * two trusted proxies (Caddy, then the web container) for client-address handling;
+#   * the website-import private-host allowlist is forced empty;
+#   * Mailpit is not started (real SMTP is required); containers restart automatically.
+
+x-app-env: &app_env
+  DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-onboard}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD to a long random value}@postgres:5432/${POSTGRES_DB:-onboard}
+  S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD to a long random value}
+  APP_ORIGIN: https://${DOMAIN:?Set DOMAIN to the public host name}
+  PUBLIC_BASE_URL: https://${DOMAIN}
+  COOKIE_SECURE: "true"
+  TRUSTED_PROXY_HOPS: "2"
+  WEB_PRIVATE_HOST_ALLOWLIST: ""
+  WEB_ALLOWED_PORTS: "80,443"
+  SMTP_HOST: ${SMTP_HOST:?Set SMTP_HOST to your mail relay}
+  SMTP_PORT: ${SMTP_PORT:-587}
+  SMTP_STARTTLS: ${SMTP_STARTTLS:-true}
+  SMTP_USERNAME: ${SMTP_USERNAME:-}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+  SMTP_FROM: ${SMTP_FROM:?Set SMTP_FROM, for example "Implementation team <onboard@your-domain>"}
+
+services:
+  postgres:
+    restart: unless-stopped
+    ports: !reset []
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD to a long random value}
+  minio:
+    restart: unless-stopped
+    ports: !reset []
+    environment:
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD to a long random value}
+  storage-init:
+    environment:
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD to a long random value}
+  mailpit:
+    profiles: ["dev-mail"]
+    ports: !reset []
+  migrate:
+    environment: *app_env
+  backend:
+    restart: unless-stopped
+    ports: !reset []
+    environment: *app_env
+  worker:
+    restart: unless-stopped
+    environment: *app_env
+  frontend:
+    restart: unless-stopped
+    ports: !reset []
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN to the public host name}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      frontend: { condition: service_healthy }
+
+volumes:
+  caddy-data:
+  caddy-config:

@@ -9,10 +9,10 @@ include = ["app*"]
 name = "super-onboard"
 version = "0.0.1"
 requires-python = ">=3.11"
-dependencies = ["fastapi==0.135.1", "uvicorn==0.42.0", "sqlalchemy==2.0.48", "psycopg[binary]==3.3.3", "alembic==1.18.4", "pydantic-settings==2.13.1", "boto3==1.42.0", "python-multipart==0.0.22", "pypdf==6.9.1", "python-docx==1.2.0", "openpyxl==3.1.5"]
+dependencies = ["fastapi==0.135.1", "uvicorn==0.42.0", "sqlalchemy==2.0.48", "psycopg[binary]==3.3.3", "alembic==1.18.4", "pydantic-settings==2.14.2", "boto3==1.42.0", "python-multipart==0.0.31", "pypdf==6.21.2", "python-docx==1.2.0", "openpyxl==3.1.5", "defusedxml==0.7.1"]
 
 [project.optional-dependencies]
-dev = ["pytest==9.0.2", "httpx==0.28.1", "ruff==0.15.6"]
+dev = ["pytest==9.0.3", "httpx==0.28.1", "ruff==0.15.6"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
