@@ -10,6 +10,7 @@ from app.middleware import RequestBoundary
 from app.outputs import router as outputs_router
 from app.public import router as public_router
 from app.review import router as review_router
+from app.webimport import router as webimport_router
 
 app = FastAPI(title="Super Onboard", version="0.1.0")
 app.add_middleware(RequestBoundary)
@@ -18,12 +19,13 @@ app.include_router(api_router)
 app.include_router(review_router)
 app.include_router(customer_router)
 app.include_router(outputs_router)
+app.include_router(webimport_router)
 app.include_router(public_router)
 
 
 @app.get("/health/live")
 def live():
-    return {"status": "ok", "milestone": 4}
+    return {"status": "ok", "milestone": 5}
 
 
 @app.get("/health/ready")

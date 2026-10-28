@@ -24,6 +24,22 @@ class Settings(BaseSettings):
     smtp_timeout_seconds: int = 10
     invitation_default_days: int = 7
     cookie_secure: bool = False
+    # Website import (M5). Defaults follow the PRD: 25 pages, depth 2, 5 MB per page.
+    web_user_agent: str = "SuperOnboardBot/1.0 (website import for customer onboarding)"
+    web_allowed_ports: str = "80,443"
+    # Comma-separated hostnames that may resolve to private addresses. Development/test only;
+    # leave empty in any shared deployment.
+    web_private_host_allowlist: str = ""
+    web_max_pages: int = 25
+    web_max_depth: int = 2
+    web_max_bytes: int = 5 * 1024 * 1024
+    web_connect_timeout: int = 8
+    web_read_timeout: int = 15
+    web_total_seconds: int = 180
+    web_delay_seconds: float = 0.5
+    web_max_redirects: int = 3
+    # Number of trusted reverse proxies in front of the API; 0 ignores X-Forwarded-For.
+    trusted_proxy_hops: int = 0
     session_hours: int = 8
     s3_endpoint: str = "http://localhost:9000"
     s3_bucket: str = "onboard-private"

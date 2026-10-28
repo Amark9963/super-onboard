@@ -116,6 +116,11 @@ class SourceVersion(ProjectBound, Base):
     filename: Mapped[str | None] = mapped_column(String(200))
     media_type: Mapped[str | None] = mapped_column(String(100))
     byte_size: Mapped[int | None] = mapped_column(Integer)
+    # Website snapshots (M5): the page URL actually fetched, when, its title, and fetch details.
+    source_url: Mapped[str | None] = mapped_column(String(2048))
+    fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    page_title: Mapped[str | None] = mapped_column(String(300))
+    fetch_meta: Mapped[dict | None] = mapped_column(JSON)
     __table_args__ = scoped(
         ("document_id", "source_documents"),
         unique=(("document_id", "version"),),
@@ -476,6 +481,55 @@ class ConflictResolution(ProjectBound, Base):
             ["project_id", "reviewer_id"],
             ["project_memberships.project_id", "project_memberships.user_id"],
         ),
+    )
+
+
+class WebImport(ProjectBound, Base):
+    """A bounded website discovery + import request. Fetched pages are unconfirmed evidence."""
+
+    __tablename__ = "web_imports"
+    root_url: Mapped[str] = mapped_column(String(2048))
+    approved_hosts: Mapped[list] = mapped_column(JSON, default=list)
+    max_pages: Mapped[int] = mapped_column(Integer)
+    max_depth: Mapped[int] = mapped_column(Integer)
+    phase: Mapped[str] = mapped_column(String(30), default="discover_pending")
+    error_code: Mapped[str | None] = mapped_column(String(100))
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_by: Mapped[str | None] = mapped_column(String(36))
+    summary: Mapped[dict | None] = mapped_column(JSON)
+    __table_args__ = scoped(
+        checks=(
+            "phase IN ('discover_pending','discovering','discovered','import_pending',"
+            "'importing','imported','failed')",
+            "max_pages > 0 AND max_depth >= 0",
+        ),
+    )
+
+
+class WebImportPage(ProjectBound, Base):
+    __tablename__ = "web_import_pages"
+    import_id: Mapped[str] = mapped_column(String(36))
+    url: Mapped[str] = mapped_column(String(2048))
+    depth: Mapped[int] = mapped_column(Integer)
+    discovered_via: Mapped[str] = mapped_column(String(20))
+    title: Mapped[str | None] = mapped_column(String(300))
+    selected: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    status: Mapped[str] = mapped_column(String(20), default="candidate")
+    reason: Mapped[str | None] = mapped_column(String(100))
+    http_status: Mapped[int | None] = mapped_column(Integer)
+    source_version_id: Mapped[str | None] = mapped_column(String(36))
+    content_hash: Mapped[str | None] = mapped_column(String(64))
+    byte_size: Mapped[int | None] = mapped_column(Integer)
+    fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    __table_args__ = scoped(
+        ("import_id", "web_imports"),
+        ("source_version_id", "source_versions"),
+        checks=(
+            "status IN ('candidate','queued','fetched','failed','blocked')",
+            "discovered_via IN ('start','sitemap','link')",
+        ),
+        unique=(("import_id", "url"),),
     )
 
 

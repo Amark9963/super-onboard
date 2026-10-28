@@ -5,6 +5,7 @@ import { api } from "./api";
 import { CustomerPanel } from "./customer";
 import { OutputsPanel } from "./outputs";
 import { ReviewWorkspace } from "./review";
+import { WebImportPanel } from "./webimport";
 
 type User = { id: string; email: string; role: string; csrf_token: string };
 type Organization = { id: string; name: string };
@@ -778,6 +779,11 @@ export default function Workspace() {
                 ))}
               </div>
             </section>
+            <WebImportPanel
+              projectId={project.id}
+              csrf={user.csrf_token}
+              onError={setError}
+            />
             <ReviewWorkspace
               projectId={project.id}
               csrf={user.csrf_token}

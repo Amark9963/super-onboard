@@ -19,10 +19,21 @@ from app.models import (
     SourceBlock,
     SourceDocument,
     SourceVersion,
+    WebImport,
+    WebImportPage,
     WorkerHeartbeat,
 )
 from app.parsing import parse_isolated
 from app.storage import get_store
+from app.webfetch import (
+    FetchError,
+    SafeFetcher,
+    discover,
+    host_scope,
+    load_robots,
+    validate_url,
+)
+from app.webimport import save_discovery, save_snapshot
 
 
 def tick():
@@ -92,6 +103,8 @@ def run_once(store=None, parser=parse_isolated):
         )
         job.error_code = result["error_code"]
         version.parse_status, version.error_code = job.status, result["error_code"]
+        if result.get("title") and not version.page_title:
+            version.page_title = result["title"]
         for block in result["blocks"]:
             db.add(SourceBlock(project_id=job.project_id, source_version_id=version.id, **block))
         db.add(
@@ -218,6 +231,171 @@ def run_extraction_once(provider_factory=get_provider):
     return True
 
 
+def run_web_once(fetcher=None, store=None, sleep=time.sleep):
+    """Claim one website import and run its discovery or snapshot phase.
+
+    All network access happens outside database transactions and only through `SafeFetcher`.
+    """
+    now = datetime.now(timezone.utc)
+    with SessionLocal.begin() as db:
+        for stale in db.scalars(
+            select(WebImport)
+            .where(
+                WebImport.phase.in_(("discovering", "importing")),
+                WebImport.claimed_at < now - timedelta(minutes=10),
+            )
+            .with_for_update(skip_locked=True)
+        ):
+            if stale.attempts >= 3:
+                stale.phase, stale.error_code = "failed", "worker_interrupted"
+            else:
+                stale.phase = (
+                    "discover_pending" if stale.phase == "discovering" else "import_pending"
+                )
+        db.flush()
+        row = db.scalar(
+            select(WebImport)
+            .where(
+                WebImport.phase.in_(("discover_pending", "import_pending")), WebImport.attempts < 3
+            )
+            .order_by(WebImport.created_at)
+            .with_for_update(skip_locked=True)
+            .limit(1)
+        )
+        if row is None:
+            return False
+        importing = row.phase == "import_pending"
+        row.phase = "importing" if importing else "discovering"
+        row.claimed_at = now
+        row.attempts += 1
+        job = (
+            row.id,
+            row.project_id,
+            row.root_url,
+            list(row.approved_hosts),
+            row.max_pages,
+            row.max_depth,
+        )
+        queued = (
+            [
+                (p.id, p.url)
+                for p in db.scalars(
+                    select(WebImportPage)
+                    .where(WebImportPage.import_id == row.id, WebImportPage.status == "queued")
+                    .order_by(WebImportPage.depth, WebImportPage.created_at, WebImportPage.id)
+                )
+            ]
+            if importing
+            else []
+        )
+    fetcher = fetcher or SafeFetcher()
+    if importing:
+        _snapshot_pages(job, queued, fetcher, store or get_store(), sleep)
+    else:
+        _discover_pages(job, fetcher, sleep)
+    return True
+
+
+def _discover_pages(job, fetcher, sleep):
+    import_id, _, root_url, approved, max_pages, max_depth = job
+    candidates, summary, error = [], {}, None
+    try:
+        candidates, summary = discover(
+            fetcher, root_url, approved, max_pages=max_pages, max_depth=max_depth, sleep=sleep
+        )
+    except FetchError as failure:
+        error = failure.code
+    except Exception:
+        error = "discovery_failed"
+    with SessionLocal.begin() as db:
+        row = db.scalar(select(WebImport).where(WebImport.id == import_id).with_for_update())
+        if row.phase != "discovering":
+            return
+        if error:
+            row.phase, row.error_code = "failed", error
+            db.add(
+                AuditEvent(
+                    project_id=row.project_id,
+                    actor_type="system",
+                    actor_reference="web_import_worker",
+                    action="web_import.failed",
+                    target_id=row.id,
+                    detail={"error_code": error},
+                )
+            )
+        else:
+            save_discovery(db, row, candidates, summary)
+
+
+def _snapshot_pages(job, queued, fetcher, store, sleep):
+    import_id, project_id, root_url, approved, _, _ = job
+    started = time.monotonic()
+    counts = {"fetched": 0, "unchanged": 0, "failed": 0, "blocked": 0}
+    root = validate_url(root_url)
+    scope = host_scope(root.host, approved)
+    robots_by_origin = {}
+
+    def mark(page_id, **fields):
+        with SessionLocal.begin() as db:
+            page = db.get(WebImportPage, page_id)
+            for key, value in fields.items():
+                setattr(page, key, value)
+
+    for number, (page_id, url) in enumerate(queued):
+        if time.monotonic() - started > settings.web_total_seconds:
+            for later_id, _ in queued[number:]:
+                mark(later_id, status="failed", reason="time_budget_exceeded")
+                counts["failed"] += 1
+            break
+        try:
+            target = validate_url(url)
+            robots = robots_by_origin.get(target.origin)
+            if robots is None:
+                robots = robots_by_origin[target.origin] = load_robots(fetcher, target, scope)
+            if not robots.allowed(target.url):
+                mark(page_id, status="blocked", reason="blocked_by_robots")
+                counts["blocked"] += 1
+                continue
+            result = fetcher.fetch(target.url, scope)
+        except FetchError as failure:
+            mark(page_id, status="failed", reason=failure.code)
+            counts["failed"] += 1
+            sleep(settings.web_delay_seconds)
+            continue
+        except Exception:
+            mark(page_id, status="failed", reason="fetch_failed")
+            counts["failed"] += 1
+            continue
+        try:
+            with SessionLocal.begin() as db:
+                row = db.get(WebImport, import_id)
+                page = db.get(WebImportPage, page_id)
+                version, unchanged = save_snapshot(db, store, row, page, result)
+                page.status, page.reason = "fetched", "unchanged" if unchanged else None
+                page.source_version_id, page.content_hash = version.id, version.content_hash
+                page.byte_size, page.http_status = version.byte_size, result.status
+                page.fetched_at = datetime.fromtimestamp(result.fetched_at, timezone.utc)
+            counts["unchanged" if unchanged else "fetched"] += 1
+        except Exception:
+            mark(page_id, status="failed", reason="storage_failed")
+            counts["failed"] += 1
+        sleep(settings.web_delay_seconds)
+    with SessionLocal.begin() as db:
+        row = db.scalar(select(WebImport).where(WebImport.id == import_id).with_for_update())
+        row.phase = "imported"
+        row.summary = {**(row.summary or {}), "import": counts}
+        db.add(
+            AuditEvent(
+                project_id=project_id,
+                actor_type="system",
+                actor_reference="web_import_worker",
+                action="web_import.imported",
+                target_id=row.id,
+                detail=counts,
+            )
+        )
+
+
 def heartbeat_loop():
     while True:
         try:
@@ -233,6 +411,7 @@ if __name__ == "__main__":
         try:
             worked = run_once()
             worked = run_extraction_once() or worked
+            worked = run_web_once() or worked
             if not worked:
                 time.sleep(2)
         except Exception:

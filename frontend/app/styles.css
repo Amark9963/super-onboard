@@ -820,3 +820,28 @@ label.choice input {
   padding: 6px 12px;
   border-left: 3px solid #cbd9cf;
 }
+
+/* M5: website import */
+.status.blocked,
+.status.failed,
+.status.queued,
+.status.discovering,
+.status.importing,
+.status.discover_pending,
+.status.import_pending {
+  background: #fff2ce;
+  color: #765617;
+}
+.status.failed,
+.status.blocked {
+  background: #ffe8db;
+  color: #9b4931;
+}
+.status.candidate {
+  background: #eef1ee;
+  color: #435449;
+}
+.inline-pair {
+  display: flex;
+  gap: 8px;
+}
