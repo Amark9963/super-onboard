@@ -459,6 +459,26 @@ class ConflictMember(ProjectBound, Base):
     )
 
 
+class ConflictResolution(ProjectBound, Base):
+    __tablename__ = "conflict_resolutions"
+    conflict_id: Mapped[str] = mapped_column(String(36))
+    response_id: Mapped[str] = mapped_column(String(36))
+    chosen_version_id: Mapped[str] = mapped_column(String(36))
+    reviewer_id: Mapped[str] = mapped_column(ForeignKey("internal_users.id"))
+    rationale: Mapped[str] = mapped_column(Text)
+    __table_args__ = scoped(
+        ("conflict_id", "conflict_groups"),
+        ("response_id", "customer_response_versions"),
+        ("chosen_version_id", "requirement_versions"),
+        unique=(("project_id", "conflict_id"),),
+    ) + (
+        ForeignKeyConstraint(
+            ["project_id", "reviewer_id"],
+            ["project_memberships.project_id", "project_memberships.user_id"],
+        ),
+    )
+
+
 class WorkerHeartbeat(Base):
     __tablename__ = "worker_heartbeats"
     name: Mapped[str] = mapped_column(String(40), primary_key=True)

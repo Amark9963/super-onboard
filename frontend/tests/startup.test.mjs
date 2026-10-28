@@ -8,7 +8,7 @@ test(
   async () => {
     const health = await fetch(`${url}/api/health`);
     assert.equal(health.status, 200);
-    assert.deepEqual(await health.json(), { status: "ok", milestone: 3 });
+    assert.deepEqual(await health.json(), { status: "ok", milestone: 4 });
     const page = await fetch(url);
     assert.equal(page.status, 200);
     const html = await page.text();

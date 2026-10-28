@@ -683,6 +683,12 @@ def inbox(project_id: str, db: DB, user: User):
                 "kind": payload["kind"],
                 "proposed_statement": (payload.get("proposed_rule") or {}).get("statement"),
                 "requirement_version_id": payload.get("requirement_version_id"),
+                "conflict_id": db.scalar(
+                    select(ClarificationQuestion.conflict_id).where(
+                        ClarificationQuestion.id == item.question_id,
+                        ClarificationQuestion.project_id == project_id,
+                    )
+                ),
                 "requirement_title": (payload.get("proposed_rule") or {}).get("title"),
                 "response_type": response.response_type,
                 "answer": response.answer,
@@ -787,6 +793,8 @@ def review_response(
             response_id=response.id,
         )
     )
+    db.flush()
+    refresh_conflicts(db, project_id)  # a validated revision becomes the current version
     record(
         db,
         project_id,

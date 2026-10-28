@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api } from "./api";
 import { CustomerPanel } from "./customer";
+import { OutputsPanel } from "./outputs";
 import { ReviewWorkspace } from "./review";
 
 type User = { id: string; email: string; role: string; csrf_token: string };
@@ -387,8 +388,8 @@ export default function Workspace() {
             <p className="lead">
               Document readiness:{" "}
               <strong>{project.readiness.replaceAll("_", " ")}</strong>. Sources
-              and extracted candidates are unconfirmed until customers confirm
-              them in a later milestone.
+              and extracted candidates require customer confirmation and staff
+              validation before they enter a blueprint.
             </p>
             <div className="grid-two">
               <section>
@@ -789,6 +790,11 @@ export default function Workspace() {
               projectId={project.id}
               csrf={user.csrf_token}
               contacts={contacts}
+              onError={setError}
+            />
+            <OutputsPanel
+              projectId={project.id}
+              csrf={user.csrf_token}
               onError={setError}
             />
             {selectedVersion && (

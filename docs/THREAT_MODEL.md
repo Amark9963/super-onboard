@@ -43,3 +43,16 @@ Production requires TLS, secret management, authenticated access, least-privileg
 | Wording changed after sending | Active links lock the candidates; send and validate re-check the snapshot | Direct database edits bypass application checks |
 | Email abuse and misreporting | Mail text never contains rule content; subjects sanitized; states say only that SMTP accepted the message | Provider-level SPF/DKIM, bounce handling and reminders are future work |
 | Stored XSS via customer text | Responses are plain text rendered by React; JSON API only | Re-check if exports render HTML |
+
+## M4 additions
+
+| Boundary / risk | M4 protection | Remaining |
+|---|---|---|
+| Staff-only or customer-only approval of policy | `approval_status` is derived on read from stored facts; no approval flag or route exists. A rule needs verified evidence, confirmed scope, a customer `confirm` for the exact wording **and** a staff validation, and no open high conflict | Any project member can validate; the PRD's manager-only sign-off is not enforced |
+| Silent rewriting of generated outputs | `artifact_versions` and `artifact_requirements` are append-only (database triggers); regeneration creates a new version | Direct database operators remain trusted |
+| Stale outputs presented as current | Staleness compares captured requirement-version ids with the current approved set on every read | A reader of an old downloaded file is not warned |
+| Pending revision removing an approved rule | The confirmed baseline stays current until a newer version is itself confirmed and validated | Revisions are manual; no automatic change detection |
+| Conflict resolved without the customer | Resolution requires a linked customer answer, a confirmed member rule, and an immutable record with rationale | The mapping from answer to chosen rule is the reviewer's judgement; staff can still dismiss a conflict as not-a-conflict |
+| Exports implying a live agent or legal consent | Every export and the readiness note say they are documents only; confirmations are labeled "confirmed via bearer review link; recipient identity not verified" | Downstream users must not treat them as signatures |
+| Cross-project output access | All new routes check membership and fetch by `project_id`; outsiders get 404 for readiness, approvals, audit, artifacts, exports, generation, resolution, revisions | M5 hardening review |
+| Untracked data egress | Generation and each export download are audited with the actor | Exports contain customer rule text and source quotes; handle downloads accordingly |

@@ -6,7 +6,6 @@ Safe to re-run: it picks an unconfirmed accepted candidate, or creates a fresh f
 """
 
 import json
-import re
 import time
 from http.cookiejar import CookieJar
 from pathlib import Path
@@ -77,7 +76,7 @@ if not candidates:
     if not pending:  # earlier runs consumed everything: add a fresh fictional source
         stamp = int(time.time())
         boundary = "super-onboard-m3-fixture"
-        content = f"Fictional Aster House permits {stamp % 3 + 1} birds.".encode()
+        content = f"Fictional Aster House permits {stamp % 4 + 1} cats (fictional policy note {stamp}).".encode()
         body = (
             f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="Fictional M3 {stamp}.txt"\r\n'
             "Content-Type: text/plain\r\n\r\n"

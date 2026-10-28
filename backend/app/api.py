@@ -121,14 +121,20 @@ def org_access(db, user, organization_id):
     return organization
 
 
-def project_json(project):
+def project_json(project, db=None):
+    if db is not None:
+        from app.outputs import readiness_snapshot
+
+        readiness = readiness_snapshot(db, project.id)["state"]
+    else:
+        readiness = project.readiness
     return {
         "id": project.id,
         "name": project.name,
         "organization_id": project.organization_id,
         "owner_id": project.owner_id,
         "go_live_target": project.go_live_target,
-        "readiness": project.readiness,
+        "readiness": readiness,
     }
 
 
@@ -173,7 +179,7 @@ def projects(db: DB, user: User):
         .where(ProjectMembership.user_id == user.id)
         .order_by(Project.created_at.desc())
     )
-    return [project_json(row) for row in db.scalars(query)]
+    return [project_json(row, db) for row in db.scalars(query)]
 
 
 @router.post("/projects", status_code=201)
@@ -195,7 +201,7 @@ def create_project(data: ProjectInput, db: DB, user: User):
 
 @router.get("/projects/{project_id}")
 def project_detail(project_id: str, db: DB, user: User):
-    return project_json(project_access(db, user, project_id))
+    return project_json(project_access(db, user, project_id), db)
 
 
 @router.patch("/projects/{project_id}")

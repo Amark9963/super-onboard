@@ -11,7 +11,7 @@ def get(url):
         return response.read().decode()
 
 
-assert json.loads(get("http://localhost:8000/health/live"))["milestone"] == 3
+assert json.loads(get("http://localhost:8000/health/live"))["milestone"] == 4
 assert json.loads(get("http://localhost:8000/health/ready"))["status"] == "ready"
 assert json.loads(get("http://localhost:3000/api/health"))["status"] == "ok"
 assert "Loading workspace" in get("http://localhost:3000")

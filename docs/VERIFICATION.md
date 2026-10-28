@@ -115,3 +115,36 @@ The local app is running at http://localhost:3000 with the M2 build, the fiction
 - Three focused backend tests passed for scoped conflict context, no customer-visible side effects, acknowledgement and target validation, and the strict model response contract. Ruff and frontend Prettier/ESLint/TypeScript checks passed; the rebuilt Next.js production image and healthy Compose stack passed.
 - Live `scripts/question_draft_e2e.py` passed through the frontend origin using the configured `gpt-6.1-sol` model and the fictional Birch Court conflict. It returned editable wording asking which weekend emergency route applies; review-request count stayed unchanged and no email was sent. The first live attempt exposed an overly strict check on an already-confirmed conflict member; that check was removed because the conflict itself remains unresolved.
 - The existing M3 composer regression passed after the change. The full 68-test suite was started but not completed: it exposed a pre-existing test that assumed no API key was configured. That test now explicitly sets the no-key condition and passed in isolation. The subsequent full run was stopped because the Windows bind-mounted test filesystem made it unusually slow; no full-suite pass is claimed for this increment.
+
+# M4 verification — 2026-10-28
+
+A Codex session produced the first M4 draft and stopped at a usage limit. It was reviewed, corrected and completed in a later session; this record covers the finished state.
+
+## Passed
+
+- Backend: **74 tests passed on SQLite and the same 74 on PostgreSQL 17** in Compose (includes the earlier M0–M3 suites and the separate question-drafting tests). Six M4 tests cover:
+  - The approval gate: blockers for each missing condition, a customer's confirmation alone not approving, staff validation completing it, `approval_status` derived consistently in detail, list and conflict views.
+  - Readiness progression across `in_review`, `extracting`, `awaiting_customer`, `drafting_artifacts`, `artifacts_current` and `blocked`.
+  - Exports: sections, per-rule verified source references (document, version, hash, anchor, exact quote), confirmation provenance, explicit exclusions needing acknowledgement, Markdown/JSON consistency, test-plan normal/negative/boundary/unresolved-dependency cases with sources, export auditing, audit trail actors, and artifact versions that cannot be updated at the database.
+  - Revisions: the confirmed baseline stays approved and outputs stay current while a revision is pending; one revision at a time; after fresh confirmation and validation the revision becomes current, earlier outputs are marked stale and unchanged, and new outputs carry only the revision.
+  - Conflict resolution: a high conflict blocks outputs; resolution requires a linked customer answer, a member and confirmed rule, and a rationale; the non-selected rule is blocked; the resolution is immutable and appears in the blueprint's provenance.
+  - Isolation: every new route returns 404 for a non-member and for ids from another project through the caller's own project.
+- Backend: Ruff lint/format (also inside Compose); Alembic upgrade/downgrade and schema-drift check; the live database migrated to `0006`.
+- Frontend: Prettier, ESLint, TypeScript and the production build; the HTTP test passed against the running container.
+- Full Compose rebuild healthy. Live `smoke.py`, `m1_e2e.py`, `m2_e2e.py`, `m3_e2e.py` and the new `m4_e2e.py` all pass against the real stack. `m4_e2e.py` resolves real high-severity conflicts through a cookie-less customer link answer, confirms generation was refused before and allowed after, generates a blueprint and test plan from approved rules only, verifies source references and confirmation provenance in the exports, downloads both formats, creates a revision and confirms the baseline stays approved, checks the audit trail, and logs out.
+- Visual inspection in Chrome: the outputs panel showed live readiness, per-rule blockers, stale v1 versus current v2 outputs, the revision-in-progress notice and the audit trail; no horizontal overflow at 390px and no script errors.
+
+## Defects found and fixed during review (all by tests or the live run)
+
+- The new migration did not create the `project_id` index its model declares (schema-drift test failed).
+- `dict(db.execute(...))` crashed the approvals endpoint (SQLAlchemy results look like mappings), so the draft's approvals view could never have worked.
+- A pending revision immediately removed the approved rule from the approved set, contradicting PRD 3.3. The confirmed baseline is now kept until a revision is itself validated. A second revision attempt also previously risked a duplicate-version error.
+- Exports carried requirement ids but no source references, no sections and a hardcoded "v1" title; exports and audit trail were not audited or exposed.
+- Duplicate `nosniff` header on downloads; per-row recomputation of approval status; stale assertions in earlier milestone tests and scripts that assumed nothing could be approved or resolved.
+
+## Scope and limits
+
+- Documents only: the blueprint and test plan are specifications and manual test cases. Nothing configures, deploys, executes or simulates anything.
+- Any project member can validate confirmations, resolve conflicts, revise and generate outputs; the PRD's manager-only final sign-off is not enforced. Mapping a customer's answer to the chosen rule is the reviewer's recorded judgement. Staff can still dismiss a conflict as not-a-conflict (M2 triage), which lifts the block. Any open high conflict in the project blocks generation.
+- Bearer links only; confirmations are labeled "confirmed via bearer review link; recipient identity not verified". Test-plan example inputs are placeholders for a human tester.
+- Live AI extraction quality is still unmeasured and the live provider has never run against a real endpoint (see M2). CI has not been run on GitHub. M5 (website import, SSRF-safe fetching, hardening) is not implemented.

@@ -190,8 +190,15 @@ def scope_json(version, names):
     }
 
 
-def candidate_json(version, title, provenance, duplicate, names):
+def candidate_json(version, title, provenance, duplicate, names, db=None, ctx=None):
+    """`ctx` (from outputs.approval_context) lets list endpoints share one computation."""
     state = effective_state(version, duplicate)
+    approved = False
+    if db is not None:
+        from app.outputs import approval_context, approval_reasons
+
+        ctx = ctx or approval_context(db, version.project_id)
+        approved = not approval_reasons(db, version, ctx["ids"], ctx["conflicts"])
     return {
         "id": version.id,
         "requirement_id": version.requirement_id,
@@ -210,7 +217,7 @@ def candidate_json(version, title, provenance, duplicate, names):
         "review_state": state,
         "review_label": STATE_LABELS[state],
         "customer_confirmation_state": version.customer_confirmation_state,
-        "approval_status": "not_approved",
+        "approval_status": "approved" if approved else "not_approved",
         "duplicate_of": duplicate.canonical_version_id if duplicate else None,
         # Revisions keep the original proposal's labels even though they have no provenance row.
         "simulated": provenance.simulated
@@ -382,6 +389,9 @@ def requirements(
 ):
     project_access(db, user, project_id)
     names = scope_names(db, project_id)
+    from app.outputs import approval_context
+
+    ctx = approval_context(db, project_id)
     everything = db.execute(candidate_rows(db, project_id)).all()
     counts = {"pending": 0, "accepted": 0, "rejected": 0, "duplicate": 0, "flagged": 0}
     for version, _, _, duplicate in everything:
@@ -410,7 +420,8 @@ def requirements(
         "total": len(rows),
         "counts": counts,
         "items": [
-            candidate_json(v, t, p, d, names) for v, t, p, d in rows[offset : offset + limit]
+            candidate_json(v, t, p, d, names, db, ctx)
+            for v, t, p, d in rows[offset : offset + limit]
         ],
     }
 
@@ -503,7 +514,7 @@ def requirement_detail(project_id: str, version_id: str, db: DB, user: User):
         )
     ).all()
     return {
-        **candidate_json(version, title, provenance, duplicate, names),
+        **candidate_json(version, title, provenance, duplicate, names, db),
         "ai_proposal": version.ai_proposal,
         "citation_report": version.citation_report,
         "evidence": evidence,
@@ -645,7 +656,7 @@ def edit_requirement(project_id: str, version_id: str, data: CandidateEdit, db: 
 
 def candidate_response(db, project_id, version_id):
     version, title, provenance, duplicate = load_candidate(db, project_id, version_id)
-    return candidate_json(version, title, provenance, duplicate, scope_names(db, project_id))
+    return candidate_json(version, title, provenance, duplicate, scope_names(db, project_id), db)
 
 
 @router.post("/projects/{project_id}/requirements/{version_id}/accept")
@@ -819,6 +830,9 @@ def conflicts(
         db.scalars(query), key=lambda g: (SEVERITY_ORDER.get(g.severity, 9), g.title or "", g.id)
     )
     names = scope_names(db, project_id)
+    from app.outputs import approval_context
+
+    ctx = approval_context(db, project_id)
     members = {}
     if groups:
         for link, version, title, provenance, duplicate in db.execute(
@@ -847,7 +861,7 @@ def conflicts(
             )
         ):
             members.setdefault(link.conflict_id, []).append(
-                candidate_json(version, title, provenance, duplicate, names)
+                candidate_json(version, title, provenance, duplicate, names, db, ctx)
             )
     return [
         {

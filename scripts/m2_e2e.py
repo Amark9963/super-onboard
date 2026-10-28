@@ -132,7 +132,8 @@ for item in items:
     assert item["simulated"] is True
     assert item["evidence_status"] == "verified"
     assert item["customer_confirmation_state"] in {"not_confirmed", "confirmed"}  # M3 may have validated one
-    assert item["approval_status"] == "not_approved"
+    # M4: only a customer-confirmed AND staff-validated rule is approved; nothing else ever is
+    assert item["approval_status"] == "not_approved" or item["customer_confirmation_state"] == "confirmed"
 
 transcript_rule = next(
     i for i in items
@@ -146,11 +147,23 @@ assert evidence["block"]["locator"].get("timestamp_start") == 63, evidence["bloc
 assert detail["ai_proposal"]["simulated"] is True
 
 groups = call(f"/projects/{pid}/conflicts")
-high = [g for g in groups if g["kind"] == "conflict" and g["severity"] == "high"]
+# Later milestones add more fictional rules, so look at the Birch Court weekend-routing conflict.
+high = [
+    g
+    for g in groups
+    if g["kind"] == "conflict"
+    and g["severity"] == "high"
+    and g["title"].startswith("Emergency routing")
+]
 assert len(high) == 1 and {m["scope"]["name"] for m in high[0]["members"]} == {"Fictional Birch Court"}
 variants = [g for g in groups if g["kind"] == "variant"]
 assert any(g["title"].startswith("Pet policy") for g in variants), "pet limits must be a variant"
-assert not any("Pet policy" in g["title"] for g in groups if g["kind"] == "conflict")
+# Different buildings are variants, never conflicts (a same-building pet conflict is legitimate).
+assert not any(
+    "Pet policy" in g["title"] and len({m["scope"]["name"] for m in g["members"]}) > 1
+    for g in groups
+    if g["kind"] == "conflict"
+)
 
 # Staff review: acceptance needs a verified citation and an explicit scope confirmation.
 target = detail
@@ -161,11 +174,12 @@ else:
     accepted = call(f"/projects/{pid}/requirements/{target['id']}")
 assert accepted["staff_review_state"] == "accepted"
 assert accepted["customer_confirmation_state"] in {"not_confirmed", "confirmed"}
-assert accepted["approval_status"] == "not_approved"
+assert accepted["approval_status"] == "not_approved" or accepted["customer_confirmation_state"] == "confirmed"
 assert call(f"/projects/{pid}/requirements/{target['id']}")["ai_proposal"] == detail["ai_proposal"]
 
 triaged = call(f"/projects/{pid}/conflicts/{high[0]['id']}/triage", {"state": "confirmed", "rationale": "Ask the customer"}, csrf)
-assert triaged["triage_state"] == "confirmed" and triaged["resolved"] is False
+# Triage is a classification: it never changes `resolved` (only an M4 resolution does).
+assert triaged["triage_state"] == "confirmed" and triaged["resolved"] == high[0]["resolved"]
 
 call("/auth/logout", b"{}", csrf)
 expect_error(401, f"/projects/{pid}/requirements")

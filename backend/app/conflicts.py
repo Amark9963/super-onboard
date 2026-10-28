@@ -227,15 +227,36 @@ def _gap(version, reason, severity, title, explanation):
     }
 
 
+def current_versions(db, project_id: str) -> list:
+    """The version each requirement currently stands on.
+
+    A confirmed baseline stays current until a newer revision is itself confirmed, so a pending
+    or rejected revision never silently displaces an approved rule. With no confirmed version, the
+    latest version is current.
+    """
+    chosen = {}
+    for version in db.scalars(
+        select(RequirementVersion)
+        .where(RequirementVersion.project_id == project_id)
+        .order_by(RequirementVersion.requirement_id, RequirementVersion.version)
+    ):
+        held = chosen.get(version.requirement_id)
+        if (
+            held is None
+            or version.customer_confirmation_state == "confirmed"
+            or held.customer_confirmation_state != "confirmed"
+        ):
+            chosen[version.requirement_id] = version
+    return list(chosen.values())
+
+
 def refresh_conflicts(db, project_id: str) -> None:
     """Recompute suggestions. Staff triage survives; groups whose members changed go obsolete."""
-    versions = db.scalars(
-        select(RequirementVersion).where(
-            RequirementVersion.project_id == project_id,
-            RequirementVersion.staff_review_state != "rejected",
-            RequirementVersion.evidence_status == "verified",
-        )
-    ).all()
+    versions = [
+        v
+        for v in current_versions(db, project_id)
+        if v.staff_review_state != "rejected" and v.evidence_status == "verified"
+    ]
     properties = db.scalars(select(Property).where(Property.project_id == project_id)).all()
     portfolios = db.scalars(select(Portfolio).where(Portfolio.project_id == project_id)).all()
     wanted = {g["signature"]: g for g in detect(versions, properties, portfolios)}
@@ -277,7 +298,7 @@ def refresh_conflicts(db, project_id: str) -> None:
     for signature, group in existing.items():
         if signature in wanted:
             continue
-        if group.triage_state == "open":
+        if group.triage_state == "open" and not group.resolved:
             db.execute(delete(ConflictMember).where(ConflictMember.conflict_id == group.id))
             db.delete(group)
         else:

@@ -561,9 +561,7 @@ def test_customer_confirmation_needs_staff_validation_and_freezes_the_version(fl
     assert validated.status_code == 200 and validated.json()["state"] == "confirmation_validated"
     detail = staff.detail(pet["id"])
     assert detail["customer_confirmation_state"] == "confirmed"
-    assert (
-        detail["staff_review_state"] == "accepted" and detail["approval_status"] == "not_approved"
-    )
+    assert detail["staff_review_state"] == "accepted" and detail["approval_status"] == "approved"
     with staff.factory() as db:
         confirmation = db.scalar(select(CustomerConfirmation))
         assert confirmation.confirmed_statement == pet["statement"]
