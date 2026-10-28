@@ -96,3 +96,22 @@ The local app is running at http://localhost:3000 with the M2 build, the fiction
 - `customer_confirmation_state = confirmed` means a customer confirmation was recorded and staff-validated. Nothing in M3 approves a rule for a blueprint, and conflicts are still never marked resolved (M4).
 - Rate limiting is per token plus a global invalid-token bucket, not per client IP. Any project member can validate confirmations; role-based sign-off is M4.
 - Live AI extraction quality is still unmeasured (see M2). CI has not been run on GitHub. M3 work is not committed.
+
+# Optional live OpenAI configuration — 2026-10-28
+
+- The operator-provided key, OpenAI base URL, and `gpt-6.1-sol` model are configured in the Git-ignored root `.env`; no credential was added to source files or `.env.example`.
+- The live adapter no longer sends `temperature`, which reasoning models reject. Its focused request-shape/worker regression test passed in Docker (1 test, 1 pre-existing Starlette warning).
+- Backend and worker images rebuilt and both services returned healthy. A direct call from the backend container to the real OpenAI endpoint with one **fictional** source block returned a schema-valid, non-simulated response with two cited candidates. No customer document was sent.
+- This first call confirmed API access, model compatibility, and response parsing. The subsequent app-to-worker run is recorded below. Extraction quality across representative documents remains unmeasured. The mock remains available, and the UI still requires explicit third-party-processing acknowledgement for live jobs.
+
+## Live app-to-worker extraction with replacement key
+
+- `scripts/live_ai_e2e.py` passed against the running stack with a freshly created fictional project and three-line fictional TXT source. The upload parsed into three evidence blocks, the normal extraction-job API queued the `openai_compatible` provider with the required external-processing acknowledgement, and the worker completed the job using `gpt-6.1-sol`.
+- The job produced **3 non-simulated candidate requirements, all 3 with verified citations, and 0 approved rules**. Logout completed. This verifies the end-to-end live path for one synthetic example; it is not a representative quality benchmark or evidence of customer policy approval.
+
+# AI-assisted clarification drafting — 2026-10-28
+
+- Added a project-scoped `POST /api/projects/{project_id}/question-suggestions` endpoint and an editable *Draft question with AI* control in the M3 composer. The model receives bounded rule wording and verified excerpts only after explicit external-processing acknowledgement. No question is sent or persisted as a review request by this action.
+- Three focused backend tests passed for scoped conflict context, no customer-visible side effects, acknowledgement and target validation, and the strict model response contract. Ruff and frontend Prettier/ESLint/TypeScript checks passed; the rebuilt Next.js production image and healthy Compose stack passed.
+- Live `scripts/question_draft_e2e.py` passed through the frontend origin using the configured `gpt-6.1-sol` model and the fictional Birch Court conflict. It returned editable wording asking which weekend emergency route applies; review-request count stayed unchanged and no email was sent. The first live attempt exposed an overly strict check on an already-confirmed conflict member; that check was removed because the conflict itself remains unresolved.
+- The existing M3 composer regression passed after the change. The full 68-test suite was started but not completed: it exposed a pre-existing test that assumed no API key was configured. That test now explicitly sets the no-key condition and passed in isolation. The subsequent full run was stopped because the Windows bind-mounted test filesystem made it unusually slow; no full-suite pass is claimed for this increment.

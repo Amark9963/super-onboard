@@ -347,7 +347,6 @@ class OpenAICompatibleProvider:
         body = json.dumps(
             {
                 "model": settings.ai_model,
-                "temperature": 0,
                 "messages": [
                     {"role": "system", "content": _SYSTEM_PROMPT},
                     {"role": "user", "content": json.dumps(payload)},

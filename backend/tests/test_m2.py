@@ -126,6 +126,7 @@ def test_wire_schema_is_strict_mode_compatible():
 
 
 def test_provider_options_hide_live_provider_without_key(monkeypatch):
+    monkeypatch.setattr(settings, "ai_api_key", None)
     options = provider_options()
     assert [o["id"] for o in options] == ["mock"]
     assert options[0]["simulated"] and not options[0]["external_processing"]
@@ -461,6 +462,7 @@ def test_live_adapter_request_shape_and_end_to_end_via_worker(staff, monkeypatch
         and headers["Authorization"] == "Bearer test-key-do-not-leak"
     )
     assert "test-key-do-not-leak" not in json.dumps(body)
+    assert "temperature" not in body  # Reasoning models reject sampling controls.
     assert body["response_format"]["json_schema"]["strict"] is True
     assert "untrusted data" in body["messages"][0]["content"]
     payload = json.loads(body["messages"][1]["content"])

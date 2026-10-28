@@ -13,6 +13,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import Field
 from sqlalchemy import func, select
 
+from app import question_drafts
+from app.ai import ProviderError
 from app.api import Input, project_access, scoped_object
 from app.auth import DB, User
 from app.config import settings
@@ -37,6 +39,7 @@ from app.models import (
     AuditEvent,
     ClarificationQuestion,
     ConflictGroup,
+    ConflictMember,
     CustomerConfirmation,
     CustomerContact,
     CustomerResponseVersion,
@@ -93,6 +96,12 @@ class ReviseInput(Input):
     statement: Annotated[str, Field(min_length=1, max_length=2000)] | None = None
 
 
+class SuggestQuestionInput(Input):
+    conflict_id: str | None = None
+    requirement_version_id: str | None = None
+    acknowledge_external_processing: bool = False
+
+
 def base_url() -> str:
     return (settings.public_base_url or settings.app_origin).rstrip("/")
 
@@ -123,6 +132,105 @@ def invitation_json(db, invitation, contact=None):
 
 
 # ---------------------------------------------------------------- composing
+
+
+def suggestion_rule(db, project_id, version_id, names):
+    version = scoped_object(db, RequirementVersion, project_id, version_id)
+    if version.evidence_status != "verified" or version.staff_review_state in {
+        "rejected",
+        "duplicate",
+        "merged",
+    }:
+        raise HTTPException(
+            422, "Only a live candidate with verified evidence can inform a question"
+        )
+    quotes = db.scalars(
+        select(RequirementEvidence)
+        .where(
+            RequirementEvidence.project_id == project_id,
+            RequirementEvidence.requirement_version_id == version_id,
+            RequirementEvidence.quote_match_state.in_(("exact", "normalized")),
+        )
+        .order_by(RequirementEvidence.id)
+        .limit(2)
+    ).all()
+    if not quotes:
+        raise HTTPException(422, "No verified excerpt is available for this candidate")
+    scope_id = version.property_id or version.portfolio_id
+    return {
+        "statement": version.statement[:800],
+        "scope": "Company-wide" if version.scope_type == "company" else names.get(scope_id),
+        "conditions": (version.conditions or [])[:5],
+        "verified_excerpts": [quote.quoted_text[:350] for quote in quotes],
+    }
+
+
+@router.post("/projects/{project_id}/question-suggestions")
+def suggest_clarification(project_id: str, data: SuggestQuestionInput, db: DB, user: User):
+    """Suggest editable wording; this neither creates a review request nor sends a link."""
+    project_access(db, user, project_id)
+    if bool(data.conflict_id) == bool(data.requirement_version_id):
+        raise HTTPException(422, "Select exactly one conflict or candidate")
+    if not settings.ai_api_key:
+        raise HTTPException(503, "Live AI question drafting is not configured")
+    if not data.acknowledge_external_processing:
+        raise HTTPException(422, "Acknowledge external AI processing before drafting")
+
+    names = scope_names(db, project_id)
+    if data.conflict_id:
+        group = scoped_object(db, ConflictGroup, project_id, data.conflict_id)
+        if group.kind not in {"conflict", "gap"} or group.triage_state in {
+            "obsolete",
+            "dismissed",
+        }:
+            raise HTTPException(422, "This suggestion is not an active clarification target")
+        ids = db.scalars(
+            select(ConflictMember.requirement_version_id)
+            .where(ConflictMember.project_id == project_id, ConflictMember.conflict_id == group.id)
+            .limit(5)
+        ).all()
+        if not ids:
+            raise HTTPException(422, "This suggestion has no candidate rules")
+        context = {
+            "kind": group.kind,
+            "title": (group.title or "Clarification")[:300],
+            "scope_intersection": group.scope_intersection,
+            "rules": [suggestion_rule(db, project_id, version_id, names) for version_id in ids],
+        }
+        target_id = group.id
+    else:
+        context = {
+            "kind": "candidate",
+            "rules": [suggestion_rule(db, project_id, data.requirement_version_id, names)],
+        }
+        target_id = data.requirement_version_id
+
+    # Release the read transaction before waiting on a third-party network call.
+    db.rollback()
+    try:
+        suggestion = question_drafts.suggest_question(context)
+    except ProviderError as error:
+        raise HTTPException(
+            503 if error.code == "provider_not_configured" else 502,
+            f"AI question drafting failed ({error.code})",
+        ) from None
+    record(
+        db,
+        project_id,
+        user,
+        "clarification.suggested",
+        target_id,
+        {"model": settings.ai_model, "target_kind": context["kind"]},
+    )
+    db.commit()
+    return {
+        "question": suggestion.question,
+        "answer_type": "free_text",
+        "conflict_id": data.conflict_id,
+        "requirement_version_id": data.requirement_version_id,
+        "model": settings.ai_model,
+        "review_required": True,
+    }
 
 
 def eligible_rule(db, project_id, version_id):

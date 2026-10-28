@@ -63,7 +63,29 @@ type Inbox = {
   next_action: string | null;
   confirmation_note: string;
 };
-type Question = { question: string; answer_type: string; choices: string };
+type Question = {
+  question: string;
+  answer_type: string;
+  choices: string;
+  conflict_id?: string | null;
+  requirement_version_id?: string | null;
+  ai_suggested?: boolean;
+};
+type Conflict = {
+  id: string;
+  kind: string;
+  title: string;
+  triage_state: string;
+};
+type Provider = { id: string; model: string | null };
+type Suggestion = {
+  question: string;
+  answer_type: string;
+  conflict_id: string | null;
+  requirement_version_id: string | null;
+  model: string;
+  review_required: boolean;
+};
 
 const words = (v: string) => v.replaceAll("_", " ");
 const message = (r: unknown) => (r instanceof Error ? r.message : String(r));
@@ -95,6 +117,11 @@ export function CustomerPanel(props: {
   const [picked, setPicked] = useState<Record<string, boolean>>({});
   const [excerpts, setExcerpts] = useState<Record<string, boolean>>({});
   const [questions, setQuestions] = useState<Question[]>([]);
+  const [conflicts, setConflicts] = useState<Conflict[]>([]);
+  const [aiAvailable, setAiAvailable] = useState(false);
+  const [suggestionTarget, setSuggestionTarget] = useState("");
+  const [aiAcknowledged, setAiAcknowledged] = useState(false);
+  const [suggestedModel, setSuggestedModel] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [issued, setIssued] = useState<Issued | null>(null);
   const [notes, setNotes] = useState<Record<string, string>>({});
@@ -110,8 +137,10 @@ export function CustomerPanel(props: {
         ),
         api<RequestRow[]>(`/projects/${projectId}/review-requests`),
         api<Inbox[]>(`/projects/${projectId}/responses`),
+        api<Conflict[]>(`/projects/${projectId}/conflicts`),
+        api<Provider[]>("/ai/providers"),
       ])
-        .then(([c, r, i]) => {
+        .then(([c, r, i, groups, providers]) => {
           if (!live) return;
           setEligible(
             c.items.filter(
@@ -122,6 +151,16 @@ export function CustomerPanel(props: {
           );
           setRequests(r);
           setInbox(i);
+          setConflicts(
+            groups.filter(
+              (group) =>
+                ["conflict", "gap"].includes(group.kind) &&
+                !["obsolete", "dismissed"].includes(group.triage_state),
+            ),
+          );
+          setAiAvailable(
+            providers.some((provider) => provider.id === "openai_compatible"),
+          );
         })
         .catch((reason) => live && onError(message(reason)));
     load();
@@ -177,6 +216,10 @@ export function CustomerPanel(props: {
           kind: "question",
           question: q.question,
           answer_type: q.answer_type,
+          ...(q.conflict_id ? { conflict_id: q.conflict_id } : {}),
+          ...(q.requirement_version_id
+            ? { requirement_version_id: q.requirement_version_id }
+            : {}),
           choices: q.choices
             .split(",")
             .map((s) => s.trim())
@@ -192,6 +235,32 @@ export function CustomerPanel(props: {
       const data = created as unknown as Draft;
       setDraft(data);
       setIssued(null);
+    });
+  }
+
+  async function suggest() {
+    if (!suggestionTarget || !aiAcknowledged) return;
+    const [kind, id] = suggestionTarget.split(":", 2);
+    await run(async () => {
+      const result = await post("/question-suggestions", {
+        ...(kind === "conflict"
+          ? { conflict_id: id }
+          : { requirement_version_id: id }),
+        acknowledge_external_processing: true,
+      });
+      const draft = result as unknown as Suggestion;
+      setQuestions((current) => [
+        ...current,
+        {
+          question: draft.question,
+          answer_type: draft.answer_type,
+          choices: "",
+          conflict_id: draft.conflict_id,
+          requirement_version_id: draft.requirement_version_id,
+          ai_suggested: true,
+        },
+      ]);
+      setSuggestedModel(draft.model);
     });
   }
 
@@ -405,10 +474,70 @@ export function CustomerPanel(props: {
               </div>
             ))}
             <h3>Questions</h3>
+            {aiAvailable ? (
+              <div className="grid-two tight">
+                <label>
+                  Draft a clarification from
+                  <select
+                    value={suggestionTarget}
+                    onChange={(e) => setSuggestionTarget(e.target.value)}
+                  >
+                    <option value="">
+                      Select a conflict, gap or candidate
+                    </option>
+                    <optgroup label="Conflicts and gaps">
+                      {conflicts.map((group) => (
+                        <option key={group.id} value={`conflict:${group.id}`}>
+                          {words(group.kind)} · {group.title}
+                        </option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="Candidates ready for customer review">
+                      {eligible.map((candidate) => (
+                        <option
+                          key={candidate.id}
+                          value={`requirement:${candidate.id}`}
+                        >
+                          {candidate.title} · {candidate.scope.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  </select>
+                </label>
+                <label className="check">
+                  <input
+                    type="checkbox"
+                    checked={aiAcknowledged}
+                    onChange={(e) => setAiAcknowledged(e.target.checked)}
+                  />
+                  I understand the linked rule wording and verified excerpts
+                  will be sent to the configured AI provider.
+                </label>
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={busy || !suggestionTarget || !aiAcknowledged}
+                  onClick={() => void suggest()}
+                >
+                  {busy ? "Drafting…" : "Draft question with AI"}
+                </button>
+              </div>
+            ) : (
+              <p className="subtle">
+                Configure a live AI provider to draft questions here.
+              </p>
+            )}
+            {suggestedModel && (
+              <p className="notice">
+                AI suggestion from {suggestedModel}. Edit the wording before
+                creating the customer preview.
+              </p>
+            )}
             {questions.map((q, i) => (
               <div className="grid-two tight" key={i}>
                 <label>
                   Question
+                  {q.ai_suggested ? " (AI suggestion — review and edit)" : ""}
                   <input
                     value={q.question}
                     maxLength={1000}
