@@ -29,6 +29,12 @@ import {
   weeklyCheckIn,
   convertIssue,
 } from "../app/prototype/state.ts";
+import {
+  documentRequests,
+  documentStatus,
+  kickoffAgenda,
+} from "../app/prototype/client.ts";
+import { allSources } from "../app/prototype/state.ts";
 
 const approveAll = (s) => {
   for (const q of s.questions)
@@ -306,4 +312,33 @@ test("outputs: check-in, CSV rows and Slack text are derived from state", () => 
   const csv = exportCsv(initialState).trim().split("\n");
   assert.equal(csv.length, 21);
   assert.match(csv[0], /^fact_id,area,fact,value,status,approval,owner/);
+});
+
+test("the kickoff agenda covers every required fact and marks answered ones", () => {
+  const agenda = kickoffAgenda(initialState);
+  const items = agenda.flatMap((a) => a.items);
+  assert.equal(items.length, 20);
+  assert.equal(items.filter((i) => i.covered).length, 16);
+  assert.equal(agenda.length, 5);
+});
+
+test("document requests report received, unreadable and missing sources", () => {
+  const sources = allSources(initialState);
+  const status = Object.fromEntries(
+    documentRequests.map((d) => [
+      d.label,
+      documentStatus(initialState, d.sourceId, sources),
+    ]),
+  );
+  assert.equal(status["Kickoff call recording"], "Received");
+  assert.equal(status["Move-in checklist"], "Needs a readable copy");
+  assert.equal(status["Property-system owner and access contact"], "Missing");
+});
+
+test("configuring comes before testing in the next actions", () => {
+  const s = prepared();
+  assert.equal(nextActions(s)[0].id, "configure");
+  let done = s;
+  for (const f of done.facts) done = markConfigured(done, f.id);
+  assert.equal(nextActions(done)[0].id, "tests");
 });

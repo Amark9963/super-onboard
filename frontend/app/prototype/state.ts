@@ -1663,10 +1663,27 @@ export function nextActions(state: PrototypeState): NextAction[] {
       target: { view: "requirements", factId: unreviewed[0].id },
     });
   if (readiness(state).ready) {
+    const toConfigure = state.facts.filter(
+      (f) =>
+        configurable(f) &&
+        f.lifecycle !== "Configured" &&
+        (!f.critical || isConfirmed(f)),
+    );
+    if (toConfigure.length)
+      a({
+        id: "configure",
+        tone: "orange",
+        icon: "⚙",
+        title: `Configure ${toConfigure.length} confirmed fact${toConfigure.length === 1 ? "" : "s"} in the agent`,
+        subtitle: "Build the agent from confirmed facts only",
+        due: "Before testing",
+        button: "Open stage 4",
+        target: { view: "qa" },
+      });
     const waiting = testCases(state).filter((t) =>
       ["Not run", "Needs retest", "Fail"].includes(testStatus(state, t)),
     );
-    if (waiting.length)
+    if (!toConfigure.length && waiting.length)
       a({
         id: "tests",
         tone: "orange",
