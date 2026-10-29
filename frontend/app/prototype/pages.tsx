@@ -24,26 +24,6 @@ import { ContactCard, ContactForm } from "./contacts";
 export function Login({ onSignIn }: { onSignIn: () => void }) {
   return (
     <div className="v3 v3-login">
-      <div className="side">
-        <i className="v3-logo-tile">so</i>
-        <h1>
-          Turn customer documents into confirmed requirements, and know who each
-          open item is waiting on.
-        </h1>
-        <ul>
-          <li>
-            Upload a customer’s documents and see what the agent needs to know.
-          </li>
-          <li>Catch contradictions before the customer does.</li>
-          <li>
-            Ask the right person once, and always know who it is waiting on.
-          </li>
-        </ul>
-        <p className="v3-muted">
-          Independent prototype with fictional data. Not affiliated with any
-          voice-agent vendor.
-        </p>
-      </div>
       <form
         className="card"
         onSubmit={(e) => {
@@ -51,11 +31,8 @@ export function Login({ onSignIn }: { onSignIn: () => void }) {
           onSignIn();
         }}
       >
+        <i className="v3-logo-tile">so</i>
         <h2>Sign in</h2>
-        <p className="v3-muted">
-          Simulated sign-in for the demo. No account is created and nothing
-          leaves your browser.
-        </p>
         <label className="v3-field">
           Email
           <input type="email" defaultValue="avery.morgan@example.invalid" />
@@ -68,7 +45,7 @@ export function Login({ onSignIn }: { onSignIn: () => void }) {
           Sign in
         </button>
         <p className="v3-muted">
-          Signing in as Avery Morgan, onboarding specialist.
+          Demo sign-in with fictional data. Nothing leaves your browser.
         </p>
       </form>
     </div>

@@ -120,7 +120,21 @@ export default function Prototype() {
 
   return (
     <div className="v3 v3-app">
+      {menu && (
+        <div
+          className="v3-backdrop"
+          onClick={() => setMenu(false)}
+          aria-hidden
+        />
+      )}
       <aside className={`v3-sidebar ${menu ? "open" : ""}`}>
+        <button
+          className="v3-menuclose"
+          aria-label="Close navigation"
+          onClick={() => setMenu(false)}
+        >
+          ×
+        </button>
         <div className="v3-brand">
           <i className="v3-logo-tile">so</i>
           <span>
