@@ -2187,3 +2187,60 @@ export function ownedBy(
     out.push({ name: c, live: false });
   return out;
 }
+
+// ---------------------------------------------------------------------------------------------
+// Customer team: contacts can be added after the onboarding starts
+// ---------------------------------------------------------------------------------------------
+
+export const contactRoleSuggestions = [
+  "Operations lead",
+  "Property manager",
+  "Leasing coordinator",
+  "Maintenance supervisor",
+  "Owner or principal",
+];
+
+export type ContactCheck =
+  { ok: true; contact: Contact } | { ok: false; error: string };
+
+/** Validate a new customer contact against the people already on the team. */
+export function checkContact(
+  existing: Contact[],
+  draft: { name: string; role: string; email: string; decides: Topic[] },
+): ContactCheck {
+  const name = draft.name.trim();
+  const email = draft.email.trim();
+  if (!name) return { ok: false, error: "Enter the person's name." };
+  if (existing.some((c) => c.name.toLowerCase() === name.toLowerCase()))
+    return { ok: false, error: `${name} is already on the customer team.` };
+  if (email && !EMAIL.test(email))
+    return {
+      ok: false,
+      error: "Enter a valid email address, or leave it blank.",
+    };
+  return {
+    ok: true,
+    contact: {
+      name,
+      role: draft.role.trim() || "Contact",
+      email,
+      decides: [...draft.decides],
+    },
+  };
+}
+
+export function addContact(
+  state: PrototypeState,
+  draft: { name: string; role: string; email: string; decides: Topic[] },
+): PrototypeState {
+  if (!state.client) return state;
+  const check = checkContact(state.client.contacts, draft);
+  if (!check.ok) return state;
+  return {
+    ...state,
+    client: {
+      ...state.client,
+      contacts: [...state.client.contacts, check.contact],
+    },
+  };
+}

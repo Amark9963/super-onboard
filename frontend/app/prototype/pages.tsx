@@ -15,10 +15,10 @@ import {
   type Client,
   type Contact,
   type Question,
-  type Topic,
 } from "./state";
 import { phaseNames, phaseProgress, planTasks } from "./plan";
 import { Avatar, Empty, Person, StatusDot, Tag, type Ctx } from "./ui";
+import { ContactCard, ContactForm } from "./contacts";
 
 /* ------------------------------------------------------------------ login */
 export function Login({ onSignIn }: { onSignIn: () => void }) {
@@ -347,9 +347,8 @@ export function NewOnboarding({
   const [propText, setPropText] = useState(
     demoClient.properties.map((p) => `${p.name}, ${p.units} units`).join("\n"),
   );
-  const [contacts, setContacts] = useState<Contact[]>(
-    demoClient.contacts.map((c) => ({ ...c, decides: [...c.decides] })),
-  );
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [adding, setAdding] = useState(false);
   const labels = ["Client details", "Customer team", "Review and create"];
 
   const properties = propText
@@ -366,18 +365,7 @@ export function NewOnboarding({
   const uncovered = topics.filter(
     (t) => !contacts.some((c) => c.decides.includes(t.id)),
   );
-  const valid =
-    name.trim() &&
-    properties.length > 0 &&
-    contacts.every((c) => c.name.trim());
-  const setC = (i: number, patch: Partial<Contact>) =>
-    setContacts(contacts.map((x, idx) => (idx === i ? { ...x, ...patch } : x)));
-  const toggleTopic = (i: number, t: Topic) =>
-    setC(i, {
-      decides: contacts[i].decides.includes(t)
-        ? contacts[i].decides.filter((x) => x !== t)
-        : [...contacts[i].decides, t],
-    });
+  const valid = name.trim() && properties.length > 0 && contacts.length > 0;
 
   function build(): Client {
     const units = properties.reduce((sum, p) => sum + p.units, 0);
@@ -403,7 +391,8 @@ export function NewOnboarding({
         <div>
           <h1>New onboarding</h1>
           <p className="v3-muted">
-            Prefilled with fictional demo data. Edit anything.
+            Client details are prefilled with fictional demo data. You add the
+            customer team yourself, or use the sample team.
           </p>
         </div>
       </div>
@@ -479,50 +468,59 @@ export function NewOnboarding({
             Questions and document requests go to the person who decides the
             topic.
           </p>
-          {contacts.map((c, i) => (
-            <div className="v3-contactedit" key={i}>
-              <div className="v3-formgrid">
-                <label className="v3-field">
-                  Name
-                  <input
-                    value={c.name}
-                    onChange={(e) => setC(i, { name: e.target.value })}
-                  />
-                </label>
-                <label className="v3-field">
-                  Role
-                  <input
-                    value={c.role}
-                    onChange={(e) => setC(i, { role: e.target.value })}
-                  />
-                </label>
-                <label className="v3-field wide">
-                  Email
-                  <input
-                    value={c.email}
-                    onChange={(e) => setC(i, { email: e.target.value })}
-                  />
-                </label>
-              </div>
-              <div className="v3-chips">
-                {topics.map((t) => (
-                  <label
-                    key={t.id}
-                    className={`v3-chip ${c.decides.includes(t.id) ? "on" : ""}`}
-                  >
-                    <input
-                      type="checkbox"
-                      hidden
-                      checked={c.decides.includes(t.id)}
-                      onChange={() => toggleTopic(i, t.id)}
-                    />
-                    {t.label}
-                  </label>
-                ))}
-              </div>
-            </div>
+          {contacts.map((c) => (
+            <ContactCard
+              key={c.name}
+              c={c}
+              onRemove={() =>
+                setContacts(contacts.filter((x) => x.name !== c.name))
+              }
+            />
           ))}
-          {uncovered.length > 0 && (
+          {contacts.length === 0 && !adding && (
+            <div className="v3-emptyteam">
+              <strong>No customer team members yet</strong>
+              <p className="v3-muted">
+                Add the people who will answer our questions and send us
+                documents.
+              </p>
+            </div>
+          )}
+          {adding ? (
+            <ContactForm
+              existing={contacts}
+              onAdd={(c) => {
+                setContacts([...contacts, c]);
+                setAdding(false);
+              }}
+              onCancel={() => setAdding(false)}
+            />
+          ) : (
+            <div className="v3-actions">
+              <button
+                className="v3-btn secondary"
+                onClick={() => setAdding(true)}
+              >
+                ＋ Add team member
+              </button>
+              {contacts.length === 0 && (
+                <button
+                  className="v3-link"
+                  onClick={() =>
+                    setContacts(
+                      demoClient.contacts.map((c) => ({
+                        ...c,
+                        decides: [...c.decides],
+                      })),
+                    )
+                  }
+                >
+                  Use the sample team for the demo
+                </button>
+              )}
+            </div>
+          )}
+          {uncovered.length > 0 && contacts.length > 0 && (
             <p className="v3-warn">
               No one decides:{" "}
               {uncovered.map((t) => t.label.toLowerCase()).join(", ")}. Those
@@ -580,7 +578,10 @@ export function NewOnboarding({
         {n < 3 ? (
           <button
             className="v3-btn"
-            disabled={n === 1 && !(name.trim() && properties.length)}
+            disabled={
+              (n === 1 && !(name.trim() && properties.length)) ||
+              (n === 2 && (contacts.length === 0 || adding))
+            }
             onClick={() => setN(n + 1)}
           >
             Continue

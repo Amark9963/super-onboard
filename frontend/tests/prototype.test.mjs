@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  addContact,
   addSource,
+  checkContact,
   cancelInvite,
   inviteMember,
   owners,
@@ -630,6 +632,81 @@ test("changing the owner moves the team's tasks and shows in the owner's list", 
       (e) =>
         e.kind === "owner" &&
         /Took over the onboarding from Avery Morgan/.test(e.text),
+    ),
+  );
+});
+
+test("a customer contact needs a name; duplicates and bad emails are rejected; the email is optional", () => {
+  const existing = demoClient.contacts;
+  const ok = checkContact(existing, {
+    name: "  Taylor Brooks ",
+    role: "",
+    email: "",
+    decides: ["policies"],
+  });
+  assert.equal(ok.ok, true);
+  assert.deepEqual(
+    [ok.contact.name, ok.contact.role, ok.contact.email],
+    ["Taylor Brooks", "Contact", ""],
+  );
+  assert.equal(
+    checkContact(existing, { name: " ", role: "", email: "", decides: [] }).ok,
+    false,
+  );
+  assert.match(
+    checkContact(existing, {
+      name: "maya chen",
+      role: "",
+      email: "",
+      decides: [],
+    }).error,
+    /already on the customer team/,
+  );
+  assert.match(
+    checkContact(existing, {
+      name: "Taylor",
+      role: "",
+      email: "nope",
+      decides: [],
+    }).error,
+    /valid email/,
+  );
+});
+
+test("adding a customer contact later changes who a topic is assigned to, and is logged", () => {
+  const onlyMaya = createClient(initialState, {
+    ...demoClient,
+    contacts: [demoClient.contacts[0]],
+  });
+  assert.equal(
+    contactFor(onlyMaya, "policies").name,
+    "Maya Chen",
+    "falls back to the first contact",
+  );
+  const added = addContact(onlyMaya, {
+    name: "Priya Shah",
+    role: "Property manager",
+    email: "priya@example.invalid",
+    decides: ["policies"],
+  });
+  assert.equal(added.client.contacts.length, 2);
+  assert.equal(contactFor(added, "policies").name, "Priya Shah");
+  assert.equal(
+    addContact(added, { name: "Priya Shah", role: "", email: "", decides: [] }),
+    added,
+    "duplicate is a no-op",
+  );
+  assert.equal(
+    addContact(initialState, { name: "X", role: "", email: "", decides: [] }),
+    initialState,
+    "needs an onboarding",
+  );
+  const logged = diffActivity(onlyMaya, added);
+  assert.ok(
+    logged.activity.some(
+      (e) =>
+        e.kind === "contact" &&
+        e.text === "Added Priya Shah (Property manager) to the customer team",
     ),
   );
 });

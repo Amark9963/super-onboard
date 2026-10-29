@@ -41,6 +41,14 @@ export function diffActivity(
       `Took over the onboarding from ${prev.client.owner}`,
       "owner",
     );
+  if (
+    prev.client &&
+    next.client.contacts.length > prev.client.contacts.length
+  ) {
+    const known = new Set(prev.client.contacts.map((c) => c.name));
+    for (const c of next.client.contacts.filter((x) => !known.has(x.name)))
+      add(owner, `Added ${c.name} (${c.role}) to the customer team`, "contact");
+  }
   if (!prev.docsRequested && next.docsRequested)
     add(
       owner,

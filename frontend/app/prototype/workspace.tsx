@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import {
+  addContact,
   assignments,
   consistencyReport,
   nextActions,
@@ -30,6 +31,7 @@ import {
 import { DocumentsTab } from "./documents";
 import { ClarificationsTab } from "./clarifications";
 import { RequirementsTab } from "./requirements";
+import { ContactForm } from "./contacts";
 
 /** Where a next action is worked on. */
 export function tabFor(a: NextAction): Tab {
@@ -176,6 +178,7 @@ function TaskRow({ t, ctx }: { t: Task; ctx: Ctx }) {
 function PlanTab({ ctx }: { ctx: Ctx }) {
   const { state, update, flash, go } = ctx;
   const client = state.client!;
+  const [addingContact, setAddingContact] = useState(false);
   const tasks = planTasks(state);
   const next = nextActions(state).slice(0, 3);
   const firstOpenPhase =
@@ -331,6 +334,25 @@ function PlanTab({ ctx }: { ctx: Ctx }) {
               </small>
             </div>
           ))}
+          {addingContact ? (
+            <ContactForm
+              existing={client.contacts}
+              note="Applies to questions drafted from now on. Existing questions keep their assignee."
+              onAdd={(c) => {
+                update((s) => addContact(s, c));
+                setAddingContact(false);
+                flash(`Added ${c.name} to the customer team.`);
+              }}
+              onCancel={() => setAddingContact(false)}
+            />
+          ) : (
+            <button
+              className="v3-btn secondary"
+              onClick={() => setAddingContact(true)}
+            >
+              ＋ Add team member
+            </button>
+          )}
         </section>
       </aside>
     </div>
