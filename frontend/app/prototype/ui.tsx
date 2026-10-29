@@ -4,7 +4,7 @@ import { coverageOf, isConfirmed, type PrototypeState } from "./state";
 import { phaseProgress, type Tab, type TaskStatus } from "./plan";
 
 export type View =
-  "login" | "inbox" | "clients" | "new" | "client" | "insights" | "portal";
+  "login" | "inbox" | "clients" | "new" | "client" | "team" | "portal";
 
 /** What every screen needs from the shell. */
 export type Ctx = {

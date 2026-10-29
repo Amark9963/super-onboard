@@ -1715,3 +1715,44 @@
     margin-left: 0;
   }
 }
+
+/* team page */
+.v3 .v3-team td {
+  vertical-align: middle;
+}
+.v3 .v3-team tr.invited {
+  opacity: 0.78;
+}
+.v3 .v3-team .you {
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 11px;
+}
+.v3 .v3-team .block {
+  display: block;
+  text-align: left;
+}
+.v3 .v3-role {
+  padding: 9px 0;
+  border-top: 1px solid var(--line);
+}
+.v3 .v3-role:first-of-type {
+  border-top: 0;
+}
+.v3 .v3-role small {
+  display: block;
+  color: var(--muted);
+}
+.v3 .v3-invite {
+  margin-bottom: 14px;
+  border-color: #cdd8fb;
+  background: #fbfcff;
+}
+.v3 .v3-props select {
+  padding: 3px 8px;
+}
+
+.v3 .v3-person strong .you {
+  display: inline;
+  margin-left: 4px;
+}

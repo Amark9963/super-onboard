@@ -35,6 +35,12 @@ export function diffActivity(
 
   if (!prev.client)
     add(owner, `Created the onboarding for ${next.client.name}`, "created");
+  if (prev.client && prev.client.owner !== next.client.owner)
+    add(
+      { name: next.client.owner, side: "team" },
+      `Took over the onboarding from ${prev.client.owner}`,
+      "owner",
+    );
   if (!prev.docsRequested && next.docsRequested)
     add(
       owner,

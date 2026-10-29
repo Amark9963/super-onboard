@@ -2,6 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   addSource,
+  cancelInvite,
+  inviteMember,
+  owners,
+  ownedBy,
+  setOwner,
   applyDefault,
   assignments,
   consistencyReport,
@@ -11,11 +16,9 @@ import {
   currentStep,
   demoClient,
   documentRequests,
-  exportCsv,
   initialState,
   nextActions,
   onboardingSteps,
-  processCounts,
   readiness,
   recipientsInUse,
   reopenQuestion,
@@ -402,31 +405,6 @@ test("a new customer answer after clarification reopens the readiness checks", (
   );
 });
 
-test("the process log counts real manual actions and flags three-times candidates", () => {
-  const before = processCounts(initialState);
-  assert.equal(
-    before.find((p) => p.id === "chase").candidate,
-    true,
-    "4 earlier times and not automated",
-  );
-  assert.equal(
-    before.find((p) => p.id === "compare").candidate,
-    false,
-    "already automated",
-  );
-  assert.equal(
-    before.find((p) => p.id === "review-fact").candidate,
-    false,
-    "1 earlier time is below the threshold",
-  );
-  let s = upload(started(), "roster", "faq");
-  s = reviewSource(s, "roster");
-  s = reviewFact(s, "F1");
-  const review = processCounts(s).find((p) => p.id === "review-fact");
-  assert.ok(review.live >= 3);
-  assert.equal(review.candidate, true);
-});
-
 test("the plan is derived: every task has an owner, and the customer's tasks name a real contact", () => {
   let s = started();
   const first = planTasks(s);
@@ -539,11 +517,119 @@ test("customer answers and setup tasks are logged", () => {
   assert.ok(t.activity.at(-1).text.startsWith("Completed: Phone number"));
 });
 
-test("outputs: the check-in and CSV rows are derived from state", () => {
+test("the weekly check-in is derived from state", () => {
   assert.match(weeklyCheckIn(started()), /stage 1 of 5/);
-  const csv = exportCsv(started()).trim().split("\n");
-  assert.equal(csv.length, 21);
-  assert.match(csv[0], /^fact_id,area,fact,lands_in,value/);
-  assert.ok(!csv[0].includes("tests"), "no test columns any more");
+  const done = clarified();
+  assert.match(weeklyCheckIn(done), /stage 4 of 5/);
   assert.equal(step(started()).n, 1);
+});
+
+test("the team starts with four active members and survives creating a new onboarding", () => {
+  assert.equal(initialState.team.length, 4);
+  assert.ok(initialState.team.every((m) => m.status === "Active"));
+  assert.equal(
+    createClient(
+      inviteMember(initialState, "new.person@example.invalid", "QA reviewer"),
+      demoClient,
+    ).team.length,
+    5,
+  );
+});
+
+test("inviting adds an invited member; bad, duplicate and unknown-role invites are rejected", () => {
+  const s = inviteMember(
+    initialState,
+    "Jordan.Taylor@Example.invalid",
+    "QA reviewer",
+  );
+  const m = s.team.at(-1);
+  assert.deepEqual(
+    [m.status, m.role, m.email, m.name],
+    [
+      "Invited",
+      "QA reviewer",
+      "jordan.taylor@example.invalid",
+      "Jordan Taylor",
+    ],
+  );
+  assert.equal(
+    inviteMember(s, "jordan.taylor@example.invalid", "QA reviewer"),
+    s,
+    "duplicate",
+  );
+  assert.equal(
+    inviteMember(initialState, "not-an-email", "QA reviewer"),
+    initialState,
+    "invalid email",
+  );
+  assert.equal(
+    inviteMember(initialState, "x@example.invalid", "Boss"),
+    initialState,
+    "unknown role",
+  );
+});
+
+test("only invitations can be cancelled, and only active members can own an onboarding", () => {
+  const s = inviteMember(
+    initialState,
+    "pending@example.invalid",
+    "Onboarding specialist",
+  );
+  const pending = s.team.at(-1);
+  assert.equal(cancelInvite(s, "t-avery"), s, "active members are not removed");
+  assert.equal(cancelInvite(s, pending.id).team.length, 4);
+  assert.ok(
+    !owners(s).some((o) => o.id === pending.id),
+    "an invited person cannot own anything yet",
+  );
+  const c = createClient(s, demoClient);
+  assert.equal(setOwner(c, pending.name), c);
+  assert.equal(setOwner(c, "Nobody Here"), c);
+});
+
+test("changing the owner moves the team's tasks and shows in the owner's list", () => {
+  let s = sendDocumentRequest(started());
+  assert.ok(
+    planTasks(s)
+      .filter((t) => t.side === "team")
+      .every((t) => t.assignee === "Avery Morgan"),
+  );
+  s = setOwner(s, "Riley Kim");
+  assert.equal(s.client.owner, "Riley Kim");
+  assert.ok(
+    planTasks(s)
+      .filter((t) => t.side === "team")
+      .every((t) => t.assignee === "Riley Kim"),
+  );
+  assert.deepEqual(
+    ownedBy(
+      s,
+      s.team.find((m) => m.name === "Riley Kim"),
+    ).map((o) => o.live),
+    [true],
+  );
+  assert.deepEqual(
+    ownedBy(
+      s,
+      s.team.find((m) => m.name === "Avery Morgan"),
+    ),
+    [],
+  );
+  const sam = ownedBy(
+    s,
+    s.team.find((m) => m.name === "Sam Rivera"),
+  );
+  assert.deepEqual(
+    sam.map((o) => o.live),
+    [false, false],
+    "illustrative rows are never live",
+  );
+  const logged = diffActivity(started(), s);
+  assert.ok(
+    logged.activity.some(
+      (e) =>
+        e.kind === "owner" &&
+        /Took over the onboarding from Avery Morgan/.test(e.text),
+    ),
+  );
 });

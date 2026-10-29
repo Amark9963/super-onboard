@@ -157,6 +157,8 @@ export type SentRequest = {
 
 export type PrototypeState = {
   client: Client | null;
+  /** Our own team. Lives with the account, so it survives creating a new onboarding. */
+  team: TeamMember[];
   facts: Fact[];
   questions: Question[];
   requests: SentRequest[];
@@ -171,11 +173,78 @@ export type PrototypeState = {
   sourceRevision: number;
   /** sourceRevision at the last consistency check; null means it has never been run. */
   consistencyRun: number | null;
-  manualLog: Record<string, number>;
   /** Everything that happened, newest last. Filled by diffActivity in activity.ts. */
   activity: ActivityEvent[];
   clock: number;
 };
+
+export type TeamRole =
+  | "Onboarding lead"
+  | "Onboarding specialist"
+  | "QA reviewer"
+  | "Onboarding engineer";
+export type TeamMember = {
+  id: string;
+  name: string;
+  email: string;
+  role: TeamRole;
+  status: "Active" | "Invited";
+  /** Clients this person owns that are illustrative rows on the dashboard. */
+  illustrativeClients?: string[];
+};
+
+export const teamRoles: { role: TeamRole; blurb: string }[] = [
+  {
+    role: "Onboarding lead",
+    blurb:
+      "Owns the process and the team. Assigns owners and reviews risks and go-live.",
+  },
+  {
+    role: "Onboarding specialist",
+    blurb:
+      "Runs an onboarding end to end: documents, clarifications and setup tracking.",
+  },
+  {
+    role: "QA reviewer",
+    blurb: "Second pair of eyes on customer answers and test results.",
+  },
+  {
+    role: "Onboarding engineer",
+    blurb: "Builds automations and handles small customer-level requests.",
+  },
+];
+
+export const seedTeam: TeamMember[] = [
+  {
+    id: "t-avery",
+    name: "Avery Morgan",
+    email: "avery.morgan@example.invalid",
+    role: "Onboarding specialist",
+    status: "Active",
+  },
+  {
+    id: "t-sam",
+    name: "Sam Rivera",
+    email: "sam.rivera@example.invalid",
+    role: "Onboarding lead",
+    status: "Active",
+    illustrativeClients: ["Birchwood Apartments", "Cedar & Pine Realty"],
+  },
+  {
+    id: "t-riley",
+    name: "Riley Kim",
+    email: "riley.kim@example.invalid",
+    role: "QA reviewer",
+    status: "Active",
+  },
+  {
+    id: "t-jamie",
+    name: "Jamie Park",
+    email: "jamie.park@example.invalid",
+    role: "Onboarding engineer",
+    status: "Active",
+  },
+];
 
 export type ActivityEvent = {
   id: number;
@@ -712,7 +781,7 @@ const emptyFacts = (): Fact[] => [
   }),
 ];
 
-const freshOnboarding = (): Omit<PrototypeState, "client"> => ({
+const freshOnboarding = (): Omit<PrototypeState, "client" | "team"> => ({
   facts: emptyFacts(),
   questions: [],
   requests: [],
@@ -724,13 +793,13 @@ const freshOnboarding = (): Omit<PrototypeState, "client"> => ({
   setup: {},
   sourceRevision: 1,
   consistencyRun: null,
-  manualLog: {},
   activity: [],
   clock: 0,
 });
 
 export const initialState: PrototypeState = {
   client: null,
+  team: seedTeam,
   ...freshOnboarding(),
 };
 
@@ -753,10 +822,6 @@ export const allSources = (state: PrototypeState): Source[] =>
   state.addedSources
     .map((id) => sourceCatalog.find((s) => s.id === id)!)
     .filter(Boolean);
-const bump = (state: PrototypeState, key: string, by = 1): PrototypeState => ({
-  ...state,
-  manualLog: { ...state.manualLog, [key]: (state.manualLog[key] ?? 0) + by },
-});
 
 /** The customer contact who decides a topic. Falls back to the first contact. */
 export function contactFor(
@@ -867,23 +932,17 @@ export function reviewSource(
     state.reviewedSources.includes(id)
   )
     return state;
-  let touched = 0;
   const facts = state.facts.map((f) => {
     if (
       f.sourceId === id &&
       f.approval === "Not reviewed" &&
       f.lifecycle === "Extracted"
     ) {
-      touched++;
       return { ...f, approval: "Specialist reviewed" as const };
     }
     return f;
   });
-  return bump(
-    { ...state, facts, reviewedSources: [...state.reviewedSources, id] },
-    "review-fact",
-    touched,
-  );
+  return { ...state, facts, reviewedSources: [...state.reviewedSources, id] };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1339,15 +1398,12 @@ export function reviewFact(state: PrototypeState, id: string): PrototypeState {
     f.lifecycle === "Needs clarification"
   )
     return state;
-  return bump(
-    {
-      ...state,
-      facts: state.facts.map((x) =>
-        x.id === id ? { ...x, approval: "Specialist reviewed" as const } : x,
-      ),
-    },
-    "review-fact",
-  );
+  return {
+    ...state,
+    facts: state.facts.map((x) =>
+      x.id === id ? { ...x, approval: "Specialist reviewed" as const } : x,
+    ),
+  };
 }
 
 export function waiveFact(
@@ -1621,69 +1677,6 @@ export function slackUpdate(state: PrototypeState): string {
       : "Waiting on customer: nothing",
     `Next: ${nextActions(state)[0]?.title ?? "launch checklist"}`,
   ].join("\n");
-}
-
-// ---------------------------------------------------------------------------------------------
-// Process log, issues
-// ---------------------------------------------------------------------------------------------
-
-export const AUTOMATION_THRESHOLD = 3;
-
-export function processCounts(state: PrototypeState) {
-  return processLog.map((p) => {
-    const live = p.live ? (state.manualLog[p.live] ?? 0) : 0;
-    const total = p.baseline + live;
-    return {
-      ...p,
-      live,
-      total,
-      candidate: !p.automatedBy && total >= AUTOMATION_THRESHOLD,
-    };
-  });
-}
-
-// ---------------------------------------------------------------------------------------------
-// Export: plain rows for a table tool (for example Coda) and a JSON bundle
-// ---------------------------------------------------------------------------------------------
-
-const cell = (v: unknown) => {
-  const s = String(v ?? "");
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-};
-
-export function exportCsv(state: PrototypeState): string {
-  const rows = exportRows(state);
-  const head = Object.keys(rows[0]);
-  return (
-    [
-      head.join(","),
-      ...rows.map((r) =>
-        head.map((h) => cell((r as Record<string, unknown>)[h])).join(","),
-      ),
-    ].join("\n") + "\n"
-  );
-}
-export function exportJson(state: PrototypeState): string {
-  return (
-    JSON.stringify(
-      {
-        customer: state.client
-          ? `Fictional ${state.client.name}`
-          : "Fictional client",
-        simulated: true,
-        stage: currentStep(state).n,
-        coverage: coverage(state),
-        facts: exportRows(state),
-        process: processCounts(state).map((p) => ({
-          step: p.label,
-          count: p.total,
-          automation_candidate: p.candidate,
-        })),
-      },
-      null,
-      2,
-    ) + "\n"
-  );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2126,75 +2119,71 @@ export function weeklyCheckIn(state: PrototypeState): string {
 // Process log and export
 // ---------------------------------------------------------------------------------------------
 
-export const processLog = [
-  {
-    id: "compare",
-    label: "Compare sources for contradictions",
-    baseline: 6,
-    automatedBy: "Contradiction check",
-    live: null,
-  },
-  {
-    id: "draft",
-    label: "Turn gaps into customer questions",
-    baseline: 5,
-    automatedBy: "Clarification drafts",
-    live: null,
-  },
-  {
-    id: "recap",
-    label: "Write the weekly recap",
-    baseline: 8,
-    automatedBy: "Check-in draft",
-    live: null,
-  },
-  {
-    id: "chase",
-    label: "Chase a customer for a missing document",
-    baseline: 4,
-    automatedBy: null,
-    live: null,
-  },
-  {
-    id: "review-fact",
-    label: "Review an extracted detail against its source",
-    baseline: 1,
-    automatedBy: null,
-    live: "review-fact",
-  },
-  {
-    id: "roster",
-    label: "Re-key a roster spreadsheet",
-    baseline: 2,
-    automatedBy: null,
-    live: null,
-  },
-] as const;
+// ---------------------------------------------------------------------------------------------
+// Team: members, invitations and who owns an onboarding
+// ---------------------------------------------------------------------------------------------
 
-export const stageDays = [
-  { name: "Kickoff and client details", days: "2 days" },
-  { name: "Collect information", days: "4 days" },
-  { name: "Clarify and confirm", days: "in progress" },
-  { name: "Set up and test", days: "not started" },
-  { name: "Go live and tune", days: "not started" },
-];
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export function exportRows(state: PrototypeState) {
-  return state.facts.map((f) => ({
-    fact_id: f.id,
-    area: f.area,
-    fact: f.label,
-    lands_in: f.lands,
-    value: shownValue(f) ?? "",
-    status: f.waived ? "Waived" : f.lifecycle,
-    approval: f.approval,
-    owner: f.owner,
-    source: f.sourceId
-      ? (allSources(state).find((s) => s.id === f.sourceId)?.title ??
-        f.sourceId)
-      : "",
-    citation: f.anchor,
-    critical: f.critical ? "yes" : "no",
-    waived: f.waived?.reason ?? "",
-  }));
+/** Simulated invitation: the person appears as "Invited" until they would accept. */
+export function inviteMember(
+  state: PrototypeState,
+  email: string,
+  role: TeamRole,
+): PrototypeState {
+  const clean = email.trim().toLowerCase();
+  if (!EMAIL.test(clean) || !teamRoles.some((r) => r.role === role))
+    return state;
+  if (state.team.some((m) => m.email.toLowerCase() === clean)) return state;
+  const base = clean.split("@")[0].replace(/[._-]+/g, " ");
+  const name = base.replace(/\b\w/g, (c) => c.toUpperCase());
+  return {
+    ...state,
+    team: [
+      ...state.team,
+      {
+        id: `t-${state.team.length + 1}-${clean}`,
+        name,
+        email: clean,
+        role,
+        status: "Invited",
+      },
+    ],
+  };
+}
+
+export function cancelInvite(
+  state: PrototypeState,
+  id: string,
+): PrototypeState {
+  const m = state.team.find((x) => x.id === id);
+  if (!m || m.status !== "Invited") return state;
+  return { ...state, team: state.team.filter((x) => x.id !== id) };
+}
+
+/** Anyone who has accepted can own an onboarding. */
+export const owners = (state: PrototypeState) =>
+  state.team.filter((m) => m.status === "Active");
+
+export function setOwner(state: PrototypeState, name: string): PrototypeState {
+  if (
+    !state.client ||
+    state.client.owner === name ||
+    !owners(state).some((m) => m.name === name)
+  )
+    return state;
+  return { ...state, client: { ...state.client, owner: name } };
+}
+
+/** Onboardings a member owns: the live one if they own it, plus the illustrative dashboard rows. */
+export function ownedBy(
+  state: PrototypeState,
+  member: TeamMember,
+): { name: string; live: boolean }[] {
+  const out: { name: string; live: boolean }[] = [];
+  if (state.client && state.client.owner === member.name)
+    out.push({ name: state.client.name, live: true });
+  for (const c of member.illustrativeClients ?? [])
+    out.push({ name: c, live: false });
+  return out;
 }

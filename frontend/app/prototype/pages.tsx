@@ -2,18 +2,13 @@
 
 import { useState } from "react";
 import {
-  AUTOMATION_THRESHOLD,
-  OWNER,
+  owners,
   areas,
   assignments,
   contactByName,
   demoClient,
-  exportCsv,
-  exportJson,
   nextActions,
-  processCounts,
   sentQuestionIds,
-  stageDays,
   submitAnswer,
   topics,
   uploadSource,
@@ -23,15 +18,7 @@ import {
   type Topic,
 } from "./state";
 import { phaseNames, phaseProgress, planTasks } from "./plan";
-import {
-  Avatar,
-  Empty,
-  Person,
-  StatusDot,
-  Tag,
-  download,
-  type Ctx,
-} from "./ui";
+import { Avatar, Empty, Person, StatusDot, Tag, type Ctx } from "./ui";
 
 /* ------------------------------------------------------------------ login */
 export function Login({ onSignIn }: { onSignIn: () => void }) {
@@ -351,6 +338,12 @@ export function NewOnboarding({
   const [vertical, setVertical] = useState(demoClient.vertical);
   const [plan, setPlan] = useState<Client["plan"]>(demoClient.plan);
   const [goLive, setGoLive] = useState(demoClient.goLive);
+  const team = owners(ctx.state);
+  const [owner, setOwnerName] = useState(
+    team.find((m) => m.name === demoClient.owner)?.name ??
+      team[0]?.name ??
+      demoClient.owner,
+  );
   const [propText, setPropText] = useState(
     demoClient.properties.map((p) => `${p.name}, ${p.units} units`).join("\n"),
   );
@@ -397,7 +390,7 @@ export function NewOnboarding({
       properties,
       scope: `${properties.length} propert${properties.length === 1 ? "y" : "ies"} · ${units} units`,
       contacts,
-      owner: OWNER,
+      owner,
     };
   }
 
@@ -455,6 +448,19 @@ export function NewOnboarding({
                 value={goLive}
                 onChange={(e) => setGoLive(e.target.value)}
               />
+            </label>
+            <label className="v3-field">
+              Onboarding owner (from your team)
+              <select
+                value={owner}
+                onChange={(e) => setOwnerName(e.target.value)}
+              >
+                {team.map((m) => (
+                  <option key={m.id} value={m.name}>
+                    {m.name} · {m.role}
+                  </option>
+                ))}
+              </select>
             </label>
             <label className="v3-field wide">
               Properties (one per line: name, units)
@@ -589,88 +595,6 @@ export function NewOnboarding({
           </button>
         )}
       </div>
-    </>
-  );
-}
-
-/* ------------------------------------------------------------------ insights */
-export function Insights({ ctx }: { ctx: Ctx }) {
-  const { state } = ctx;
-  return (
-    <>
-      <div className="v3-pagehead">
-        <div>
-          <h1>Insights</h1>
-          <p className="v3-muted">
-            You can only automate what you can see. Stage timing, repeated
-            manual work, and plain-row export.
-          </p>
-        </div>
-      </div>
-      <section className="v3-card">
-        <h3>Time per phase (illustrative)</h3>
-        <ul className="v3-process">
-          {stageDays.map((s) => (
-            <li key={s.name}>
-              <span>{s.name}</span>
-              <b>{s.days}</b>
-            </li>
-          ))}
-        </ul>
-      </section>
-      <section className="v3-card">
-        <h3>Repeated manual work</h3>
-        <p className="v3-muted">
-          Rule: once a step has been done by hand {AUTOMATION_THRESHOLD} times,
-          it becomes an automation candidate. Counts are earlier onboardings
-          (fictional) plus actions you take in this session.
-        </p>
-        <ul className="v3-process">
-          {processCounts(state).map((p) => (
-            <li key={p.id}>
-              <span>{p.label}</span>
-              <b>
-                {p.total}×{p.live ? ` (${p.live} now)` : ""}
-              </b>
-              <em className={p.candidate ? "hot" : ""}>
-                {p.automatedBy
-                  ? `Automated by: ${p.automatedBy}`
-                  : p.candidate
-                    ? "Automation candidate"
-                    : "Watching"}
-              </em>
-            </li>
-          ))}
-        </ul>
-      </section>
-      <section className="v3-card">
-        <h3>Export to the team’s tools</h3>
-        <p className="v3-muted">
-          Plain rows (one per required fact) that a table tool such as Coda
-          could import, plus a JSON bundle. Nothing is sent anywhere, and this
-          is not a Coda integration.
-        </p>
-        <div className="v3-actions">
-          <button
-            className="v3-btn secondary"
-            disabled={!state.client}
-            onClick={() =>
-              download("onboarding-rows.csv", exportCsv(state), "text/csv")
-            }
-          >
-            Download rows (CSV)
-          </button>
-          <button
-            className="v3-btn secondary"
-            disabled={!state.client}
-            onClick={() =>
-              download("onboarding.json", exportJson(state), "application/json")
-            }
-          >
-            Download JSON
-          </button>
-        </div>
-      </section>
     </>
   );
 }

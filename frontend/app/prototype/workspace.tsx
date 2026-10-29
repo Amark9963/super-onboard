@@ -5,8 +5,10 @@ import {
   assignments,
   consistencyReport,
   nextActions,
+  owners,
   runConsistencyCheck,
   sendDocumentRequest,
+  setOwner,
   setupReadiness,
   slackUpdate,
   toggleSetup,
@@ -290,7 +292,17 @@ function PlanTab({ ctx }: { ctx: Ctx }) {
           <dl className="v3-props">
             <dt>Owner</dt>
             <dd>
-              <Person name={client.owner} side="team" compact />
+              <select
+                aria-label="Onboarding owner"
+                value={client.owner}
+                onChange={(e) => update((s) => setOwner(s, e.target.value))}
+              >
+                {owners(state).map((m) => (
+                  <option key={m.id} value={m.name}>
+                    {m.name}
+                  </option>
+                ))}
+              </select>
             </dd>
             <dt>Plan</dt>
             <dd>{client.plan}</dd>

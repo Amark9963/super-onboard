@@ -15,21 +15,15 @@ import { diffActivity } from "./activity";
 import { tabLabels, tabOrder, type Ctx, type View } from "./ui";
 import type { Tab } from "./plan";
 import Workspace from "./workspace";
-import {
-  Clients,
-  Inbox,
-  Insights,
-  Login,
-  NewOnboarding,
-  Portal,
-} from "./pages";
+import { TeamPage } from "./team";
+import { Clients, Inbox, Login, NewOnboarding, Portal } from "./pages";
 
 const simpleViews: View[] = [
   "login",
   "inbox",
   "clients",
   "new",
-  "insights",
+  "team",
   "portal",
 ];
 
@@ -147,10 +141,10 @@ export default function Prototype() {
           </button>
         )}
         <button
-          className={`v3-nav ${view === "insights" ? "active" : ""}`}
-          onClick={() => go("insights")}
+          className={`v3-nav ${view === "team" ? "active" : ""}`}
+          onClick={() => go("team")}
         >
-          <span className="ic">↻</span> Insights
+          <span className="ic">☷</span> Team
         </button>
         <div className="v3-userbox">
           <Avatar2 />
@@ -178,7 +172,9 @@ export default function Prototype() {
             ☰
           </button>
           <div className="v3-crumbs">
-            <button onClick={() => go("clients")}>Clients</button>
+            {(view === "clients" || view === "client" || view === "new") && (
+              <button onClick={() => go("clients")}>Clients</button>
+            )}
             {view === "client" && client && (
               <>
                 <span>/</span>
@@ -196,7 +192,7 @@ export default function Prototype() {
               </>
             )}
             {view === "inbox" && <strong>Inbox</strong>}
-            {view === "insights" && <strong>Insights</strong>}
+            {view === "team" && <strong>Team</strong>}
           </div>
           <span className="v3-sim">
             <i /> Simulated prototype · fictional data
@@ -240,7 +236,7 @@ export default function Prototype() {
               dismissWelcome={() => setWelcome(false)}
             />
           ) : (
-            <Insights ctx={ctx} />
+            <TeamPage ctx={ctx} />
           )}
         </main>
       </div>
