@@ -72,6 +72,21 @@ export function DocumentsTab({ ctx }: { ctx: Ctx }) {
   const missing = rows.filter((r) => r.status === "Not received");
   const report = consistencyReport(state);
   const drafted = state.questions.length;
+  const [reading, setReading] = useState<string[]>([]);
+  /** Simulated: a short "reading file" step, then the extraction results appear. */
+  function startUpload(ids: string[]) {
+    ids.forEach((id, i) => {
+      setReading((r) => (r.includes(id) ? r : [...r, id]));
+      window.setTimeout(
+        () => {
+          update((s) => uploadSource(s, id));
+          setReading((r) => r.filter((x) => x !== id));
+        },
+        800 + i * 500,
+      );
+    });
+  }
+  const readingNow = (id: string) => reading.includes(id);
   return (
     <>
       <section className="v3-card">
@@ -83,23 +98,28 @@ export function DocumentsTab({ ctx }: { ctx: Ctx }) {
               tool would read each file.
             </p>
           </div>
-          <button
-            className="v3-btn"
-            disabled={missing.length === 0}
-            onClick={() => {
-              update((s) =>
-                missing.reduce((acc, r) => uploadSource(acc, r.sourceId), s),
-              );
-              flash(
-                `Uploaded ${missing.length} sample document${missing.length === 1 ? "" : "s"}.`,
-              );
-            }}
-          >
-            {missing.length
-              ? `Upload all ${missing.length} samples`
-              : "All requested documents received"}
-          </button>
         </div>
+        <button
+          className={`v3-dropzone ${reading.length ? "busy" : ""}`}
+          disabled={missing.length === 0 || reading.length > 0}
+          onClick={() => {
+            startUpload(missing.map((r) => r.sourceId));
+            flash("Simulated: reading the sample documents.");
+          }}
+        >
+          <span className="icon">⬆</span>
+          <strong>
+            {missing.length === 0
+              ? "All requested documents received"
+              : reading.length
+                ? "Reading files…"
+                : `Drop files here, or click to add the ${missing.length} sample document${missing.length === 1 ? "" : "s"}`}
+          </strong>
+          <small>
+            Simulated: nothing is uploaded from your computer. Sample files
+            stand in for the customer’s documents.
+          </small>
+        </button>
         {rows.map((r) => (
           <div className="v3-doc" key={r.sourceId}>
             <div className="line">
@@ -115,22 +135,34 @@ export function DocumentsTab({ ctx }: { ctx: Ctx }) {
                 </span>
               </div>
               <Person name={r.assignee} role={r.role} side={r.side} />
-              <Tag>{r.status}</Tag>
+              <Tag kind={readingNow(r.sourceId) ? "blue" : undefined}>
+                {readingNow(r.sourceId) ? "Reading file…" : r.status}
+              </Tag>
               {r.status === "Not received" ? (
                 <button
                   className="v3-btn secondary"
-                  onClick={() => update((s) => uploadSource(s, r.sourceId))}
+                  disabled={readingNow(r.sourceId)}
+                  onClick={() => startUpload([r.sourceId])}
                 >
-                  Upload sample
+                  {readingNow(r.sourceId) ? "Reading…" : "Upload sample"}
                 </button>
               ) : (
                 <span className="v3-muted">
                   {r.source.fills.length
-                    ? `${r.source.fills.length} detail{r.source.fills.length === 1 ? "" : "s"} read`
+                    ? `${r.source.fills.length} detail${r.source.fills.length === 1 ? "" : "s"} read`
                     : "—"}
                 </span>
               )}
             </div>
+            {readingNow(r.sourceId) && (
+              <div className="v3-reading" role="status">
+                <span className="bar" />
+                <small>
+                  Reading “{r.source.title}” and matching it to the spec…
+                  (simulated)
+                </small>
+              </div>
+            )}
             {r.status !== "Not received" && (
               <Extraction ctx={ctx} src={r.source} />
             )}
@@ -163,15 +195,18 @@ export function DocumentsTab({ ctx }: { ctx: Ctx }) {
               side="team"
               role="Onboarding specialist"
             />
-            <Tag>
-              {state.addedSources.includes(draftSrc.id)
-                ? "Received"
-                : "Not received"}
+            <Tag kind={readingNow(draftSrc.id) ? "blue" : undefined}>
+              {readingNow(draftSrc.id)
+                ? "Reading file…"
+                : state.addedSources.includes(draftSrc.id)
+                  ? "Received"
+                  : "Not received"}
             </Tag>
             {!state.addedSources.includes(draftSrc.id) ? (
               <button
                 className="v3-btn secondary"
-                onClick={() => update((s) => uploadSource(s, draftSrc.id))}
+                disabled={readingNow(draftSrc.id)}
+                onClick={() => startUpload([draftSrc.id])}
               >
                 Add draft
               </button>
