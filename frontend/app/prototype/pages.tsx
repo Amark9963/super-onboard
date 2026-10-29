@@ -40,8 +40,8 @@ export function Login({ onSignIn }: { onSignIn: () => void }) {
       <div className="side">
         <i className="v3-logo-tile">so</i>
         <h1>
-          Keep requirements, configuration and tests linked from kickoff to
-          go-live.
+          Turn customer documents into confirmed requirements, and know who each
+          open item is waiting on.
         </h1>
         <ul>
           <li>

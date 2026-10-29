@@ -6,7 +6,7 @@ import {
   consistencyReport,
   contactByName,
   factById,
-  prereqItems,
+  setupItems,
   sourceCatalog,
   type ActivityEvent,
   type PrototypeState,
@@ -130,59 +130,14 @@ export function diffActivity(
       "copy",
     );
   }
-  for (const p of prereqItems)
-    if (next.prereqs[p.id] && !prev.prereqs[p.id])
-      add(owner, `Completed setup: ${p.label}`, "prereq");
-
-  const configured = (s: PrototypeState) =>
-    s.facts.filter((f) => f.lifecycle === "Configured").length;
-  if (configured(next) > configured(prev))
-    add(
-      owner,
-      `Configured ${configured(next) - configured(prev)} detail`,
-      "configure",
-    );
-  if (next.agentVersions.length > prev.agentVersions.length)
-    add(
-      owner,
-      `Published agent version ${next.agentVersions.length}`,
-      "publish",
-    );
-
-  const tests = (s: PrototypeState) => Object.keys(s.tests).length;
-  const fails = (s: PrototypeState) =>
-    Object.values(s.tests).filter((t) => t.result === "Fail").length;
-  if (fails(next) > fails(prev))
-    add(owner, "Recorded a failing test", "test-fail");
-  else if (
-    tests(next) !== tests(prev) ||
-    JSON.stringify(next.tests) !== JSON.stringify(prev.tests)
-  )
-    add(owner, "Recorded 1 test result", "test");
+  for (const item of setupItems)
+    if (next.setup[item.id] && !prev.setup[item.id])
+      add(owner, `Completed: ${item.label}`, "setup");
 
   if (!out.length) return next;
   const activity = [...next.activity];
   let clock = next.clock;
   for (const e of out) {
-    const last = activity[activity.length - 1];
-    if (
-      last &&
-      (e.kind === "test" || e.kind === "configure") &&
-      last.kind === e.kind &&
-      last.actor.name === e.actor.name
-    ) {
-      const n =
-        Number(/(\d+)/.exec(last.text)?.[1] ?? 1) +
-        Number(/(\d+)/.exec(e.text)?.[1] ?? 1);
-      activity[activity.length - 1] = {
-        ...last,
-        text:
-          e.kind === "test"
-            ? `Recorded ${n} test results`
-            : `Configured ${n} details`,
-      };
-      continue;
-    }
     clock++;
     activity.push({
       id: activity.length + 1,

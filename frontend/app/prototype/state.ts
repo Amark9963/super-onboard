@@ -13,9 +13,7 @@ export type Lifecycle =
   | "Received"
   | "Extracted"
   | "Needs clarification"
-  | "Customer confirmed"
-  | "Configured"
-  | "Tested";
+  | "Customer confirmed";
 export type Approval =
   "Not reviewed" | "Specialist reviewed" | "Customer approved";
 /** Where a fact ends up in the voice-agent platform (terms from Super's public setup pages). */
@@ -157,46 +155,18 @@ export type SentRequest = {
   questionIds: string[];
 };
 
-export type TestKind =
-  | "Normal"
-  | "Negative"
-  | "Boundary"
-  | "After-hours"
-  | "Transfer"
-  | "Emergency"
-  | "Unsupported question"
-  | "Integration failure"
-  | "From issue";
-export type TestCase = {
-  id: string;
-  factId: string;
-  kind: TestKind;
-  scenario: string;
-  expected: string;
-  critical: boolean;
-};
-export type TestResult = "Pass" | "Fail";
-export type TestRecord = { result: TestResult; note: string; factRev: number };
-export type Issue = {
-  id: string;
-  text: string;
-  factId: string;
-  expected: string;
-};
-
 export type PrototypeState = {
   client: Client | null;
   facts: Fact[];
   questions: Question[];
   requests: SentRequest[];
   resolutions: Record<string, Resolution>;
-  tests: Record<string, TestRecord>;
-  extraTests: TestCase[];
   addedSources: string[];
   reviewedSources: string[];
   docsRequested: boolean;
   copyRequested: boolean;
-  prereqs: Record<string, boolean>;
+  /** Setup and go-live tasks the specialist ticks off by hand, by id (see setupItems). */
+  setup: Record<string, boolean>;
   /** Bumps whenever a new source arrives; a check run before that is stale. */
   sourceRevision: number;
   /** sourceRevision at the last consistency check; null means it has never been run. */
@@ -205,9 +175,6 @@ export type PrototypeState = {
   /** Everything that happened, newest last. Filled by diffActivity in activity.ts. */
   activity: ActivityEvent[];
   clock: number;
-  agentVersions: AgentVersion[];
-  /** Sum of fact revisions when the last version was published; null before the first publish. */
-  publishedRevSum: number | null;
 };
 
 export type ActivityEvent = {
@@ -217,7 +184,6 @@ export type ActivityEvent = {
   text: string;
   kind: string;
 };
-export type AgentVersion = { n: number; at: string; note: string };
 
 export const areas: Area[] = [
   "Goals",
@@ -746,38 +712,21 @@ const emptyFacts = (): Fact[] => [
   }),
 ];
 
-/** Launch prerequisites typical for a voice agent on this kind of platform (from public setup pages). */
-export const prereqItems = [
-  { id: "phone", label: "Phone number selected and routing set" },
-  { id: "sms", label: "SMS registration (10DLC) submitted" },
-  { id: "pms", label: "Property-system integration connected" },
-  { id: "slack", label: "Slack channel for call logs connected" },
-  {
-    id: "voice",
-    label: "Voice and language settings confirmed (English and Spanish)",
-  },
-  { id: "fair", label: "Fair Housing guardrails reviewed" },
-];
-
 const freshOnboarding = (): Omit<PrototypeState, "client"> => ({
   facts: emptyFacts(),
   questions: [],
   requests: [],
   resolutions: {},
-  tests: {},
-  extraTests: [],
   addedSources: [],
   reviewedSources: [],
   docsRequested: false,
   copyRequested: false,
-  prereqs: {},
+  setup: {},
   sourceRevision: 1,
   consistencyRun: null,
   manualLog: {},
   activity: [],
   clock: 0,
-  agentVersions: [],
-  publishedRevSum: null,
 });
 
 export const initialState: PrototypeState = {
@@ -842,23 +791,6 @@ export function coverage(state: PrototypeState) {
   }
   return c;
 }
-/** Lifecycle as shown: a configured fact whose every test passes is "Tested". */
-export function shownLifecycle(state: PrototypeState, f: Fact): Lifecycle {
-  if (f.lifecycle !== "Configured") return f.lifecycle;
-  const mine = testCases(state).filter((t) => t.factId === f.id);
-  return mine.length > 0 && mine.every((t) => testStatus(state, t) === "Pass")
-    ? "Tested"
-    : "Configured";
-}
-/** Goals describe intent, not agent behaviour: they are reviewed but never configured or tested. */
-export const configurable = (f: Fact) => usable(f) && f.area !== "Goals";
-/** A fact the agent can be built and tested from. */
-export const usable = (f: Fact) =>
-  !f.waived &&
-  f.value !== null &&
-  f.lifecycle !== "Not received" &&
-  f.lifecycle !== "Needs clarification" &&
-  f.approval !== "Not reviewed";
 
 // ---------------------------------------------------------------------------------------------
 // Documents: request, upload (simulated extraction), review
@@ -1417,28 +1349,7 @@ export function reviewFact(state: PrototypeState, id: string): PrototypeState {
     "review-fact",
   );
 }
-export function markConfigured(
-  state: PrototypeState,
-  id: string,
-): PrototypeState {
-  const f = factById(state, id);
-  if (
-    !f ||
-    !configurable(f) ||
-    f.lifecycle === "Configured" ||
-    (f.critical && !isConfirmed(f))
-  )
-    return state;
-  return bump(
-    {
-      ...state,
-      facts: state.facts.map((x) =>
-        x.id === id ? { ...x, lifecycle: "Configured" as const } : x,
-      ),
-    },
-    "configure",
-  );
-}
+
 export function waiveFact(
   state: PrototypeState,
   id: string,
@@ -1455,13 +1366,6 @@ export function waiveFact(
         : x,
     ),
   };
-}
-export function togglePrereq(
-  state: PrototypeState,
-  id: string,
-): PrototypeState {
-  if (!prereqItems.some((p) => p.id === id)) return state;
-  return { ...state, prereqs: { ...state.prereqs, [id]: !state.prereqs[id] } };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1502,241 +1406,9 @@ export function readiness(state: PrototypeState) {
   };
 }
 
-/** Manual test cases for every usable fact. Nothing here is executed by the app. */
-export function testCases(state: PrototypeState): TestCase[] {
-  const cases: TestCase[] = [];
-  for (const f of state.facts.filter(usable)) {
-    const make = (kind: TestKind, scenario: string, expected: string) =>
-      cases.push({
-        id: `T-${f.id}-${kind.toLowerCase().replace(/[^a-z]+/g, "-")}`,
-        factId: f.id,
-        kind,
-        scenario,
-        expected,
-        critical: Boolean(f.critical),
-      });
-    // Goals describe intent, not agent behaviour, so they are not tested directly.
-    if (f.area === "Goals") continue;
-    make("Normal", `A caller asks about “${f.label}”.`, shownValue(f) ?? "");
-    make(
-      "Negative",
-      `A caller asks for something “${f.label}” does not allow.`,
-      "Declines or escalates; does not invent a permission.",
-    );
-    if (f.critical)
-      make(
-        "Boundary",
-        `A caller's situation sits at the edge of “${f.label}”.`,
-        "Applies the stated rule; escalates when unsure.",
-      );
-    if (f.area === "Team & rules") {
-      make(
-        "After-hours",
-        "The call arrives on a weekend or after hours.",
-        "Follows the reviewed after-hours route.",
-      );
-      make(
-        "Transfer",
-        "The transfer target is unavailable.",
-        "Takes a callback number and alerts the fallback role.",
-      );
-    }
-    if (f.critical)
-      make(
-        "Emergency",
-        "A resident reports an active emergency such as flooding.",
-        "Collects location, callback number and safety context, then follows the confirmed route.",
-      );
-    if (f.area === "FAQs")
-      make(
-        "Unsupported question",
-        "The caller asks something the knowledge base does not cover.",
-        "Says the team will follow up; does not guess.",
-      );
-    if (f.area === "Integrations")
-      make(
-        "Integration failure",
-        "The property-system lookup is unavailable.",
-        "Does not guess live data; takes a message.",
-      );
-  }
-  return [...cases, ...state.extraTests];
-}
-
-export type TestStatus = "Not run" | "Pass" | "Fail" | "Needs retest";
-export function testStatus(state: PrototypeState, tc: TestCase): TestStatus {
-  const record = state.tests[tc.id];
-  if (!record) return "Not run";
-  const f = factById(state, tc.factId);
-  if (!f || record.factRev !== f.rev) return "Needs retest";
-  return record.result;
-}
-export function recordTest(
-  state: PrototypeState,
-  id: string,
-  result: TestResult,
-  note = "",
-): PrototypeState {
-  const tc = testCases(state).find((t) => t.id === id);
-  const f = tc && factById(state, tc.factId);
-  if (!tc || !f) return state;
-  return bump(
-    {
-      ...state,
-      tests: {
-        ...state.tests,
-        [id]: { result, note: note.trim(), factRev: f.rev },
-      },
-    },
-    "record-test",
-  );
-}
-
-export const prereqsDone = (state: PrototypeState) =>
-  prereqItems.every((p) => state.prereqs[p.id]);
-
 // ---------------------------------------------------------------------------------------------
 // The agent: a draft built from configured facts, and published versions (draft, then locked)
 // ---------------------------------------------------------------------------------------------
-
-const revSum = (state: PrototypeState) =>
-  state.facts.reduce(
-    (sum, f) => sum + f.rev + (f.lifecycle === "Configured" ? 1000 : 0),
-    0,
-  );
-
-export function agentStatus(state: PrototypeState) {
-  const configurableFacts = state.facts.filter(configurable);
-  const configured = configurableFacts.filter(
-    (f) => f.lifecycle === "Configured",
-  ).length;
-  const published = state.agentVersions.length > 0;
-  const unpublished = published && state.publishedRevSum !== revSum(state);
-  return {
-    configured,
-    total: configurableFacts.length,
-    allConfigured:
-      configurableFacts.length > 0 && configured === configurableFacts.length,
-    published,
-    unpublished,
-    current: published
-      ? state.agentVersions[state.agentVersions.length - 1]
-      : null,
-    label: !published
-      ? "Draft"
-      : unpublished
-        ? "Draft (changes since publish)"
-        : `Published v${state.agentVersions.length}`,
-  };
-}
-export const agentPublished = (state: PrototypeState) => {
-  const s = agentStatus(state);
-  return s.published && !s.unpublished;
-};
-
-/** Lock the draft as the next published version. Only possible once every usable fact is configured. */
-export function publishAgent(
-  state: PrototypeState,
-  note = "Configured from confirmed facts",
-): PrototypeState {
-  const s = agentStatus(state);
-  if (!s.allConfigured || (s.published && !s.unpublished)) return state;
-  const n = state.agentVersions.length + 1;
-  return {
-    ...state,
-    agentVersions: [...state.agentVersions, { n, at: `Version ${n}`, note }],
-    publishedRevSum: revSum(state),
-  };
-}
-
-export function launchChecklist(state: PrototypeState) {
-  const status = readiness(state);
-  const statuses = testCases(state).map((t) => ({
-    t,
-    s: testStatus(state, t),
-  }));
-  const critical = statuses.filter((x) => x.t.critical);
-  const unreviewed = state.facts.filter(
-    (f) =>
-      coverageOf(f) !== "empty" &&
-      coverageOf(f) !== "waived" &&
-      f.approval === "Not reviewed",
-  );
-  const emptyOpen = state.facts.filter((f) => coverageOf(f) === "empty");
-  const openQuestions = state.questions.filter(
-    (q) => q.status !== "Resolved" && q.status !== "Defaulted",
-  );
-  const item = (id: string, label: string, pass: boolean, detail: string) => ({
-    id,
-    label,
-    pass,
-    detail,
-  });
-  const count = (s: TestStatus) => statuses.filter((x) => x.s === s).length;
-  const prereqLeft = prereqItems.filter((p) => !state.prereqs[p.id]).length;
-  return [
-    item(
-      "preparation",
-      "Preparation blockers cleared",
-      status.ready,
-      status.ready
-        ? "No open conflicts or critical blockers."
-        : `${status.blockers.length} open.`,
-    ),
-    item(
-      "coverage",
-      "Every required fact has a value or a waiver",
-      emptyOpen.length === 0,
-      emptyOpen.length ? `${emptyOpen.length} empty.` : "All covered.",
-    ),
-    item(
-      "reviewed",
-      "Every fact reviewed",
-      unreviewed.length === 0,
-      unreviewed.length
-        ? `${unreviewed.length} awaiting review.`
-        : "All reviewed.",
-    ),
-    item(
-      "questions",
-      "Customer questions closed",
-      openQuestions.length === 0,
-      openQuestions.length ? `${openQuestions.length} open.` : "All closed.",
-    ),
-    item(
-      "prereqs",
-      "Launch prerequisites complete",
-      prereqLeft === 0,
-      prereqLeft ? `${prereqLeft} remaining.` : "All done.",
-    ),
-    item(
-      "published",
-      "Agent version published, no unpublished changes",
-      agentPublished(state),
-      agentStatus(state).label,
-    ),
-    item(
-      "critical-tests",
-      "Critical scenarios tested and passing",
-      critical.length > 0 && critical.every((x) => x.s === "Pass"),
-      critical.length
-        ? `${critical.filter((x) => x.s === "Pass").length} of ${critical.length} passing.`
-        : "No critical scenarios are testable yet.",
-    ),
-    item(
-      "no-retest",
-      "No failing or stale results",
-      statuses.length > 0 && count("Fail") === 0 && count("Needs retest") === 0,
-      `${count("Fail")} failing · ${count("Needs retest")} need retest.`,
-    ),
-    item(
-      "all-tests",
-      "Every test case has a passing result",
-      statuses.length > 0 && count("Pass") === statuses.length,
-      `${count("Pass")} of ${statuses.length} passed.`,
-    ),
-  ];
-}
 
 // ---------------------------------------------------------------------------------------------
 // Steps with checklists, derived from the data
@@ -1762,148 +1434,6 @@ const SENT: QuestionStatus[] = [
 export const topicsCovered = (c: Client) =>
   topics.every((t) => c.contacts.some((p) => p.decides.includes(t.id)));
 
-export function onboardingSteps(state: PrototypeState): Step[] {
-  const report = consistencyReport(state);
-  const prep = readiness(state);
-  const cases = testCases(state);
-  const statuses = cases.map((t) => testStatus(state, t));
-  const sources = allSources(state);
-  const gapHandled = (x: Fact) =>
-    coverageOf(x) !== "empty" ||
-    state.questions.some(
-      (q) => q.factIds.includes(x.id) && SENT.includes(q.status),
-    ) ||
-    (x.id === "F4" && state.copyRequested);
-  const configurableFacts = state.facts.filter(configurable);
-  const lateReviewed = sources
-    .filter((s) => s.later && needsReview(s))
-    .every((s) => state.reviewedSources.includes(s.id));
-  const defs: { name: string; pieces: Piece[] }[] = [
-    {
-      name: "Kickoff and client details",
-      pieces: [
-        { label: "Client details captured", done: Boolean(state.client) },
-        {
-          label: "Customer contacts cover every topic",
-          done: state.client ? topicsCovered(state.client) : false,
-        },
-        { label: "Document request sent", done: state.docsRequested },
-      ],
-    },
-    {
-      name: "Collect information",
-      pieces: [
-        {
-          label: "Every requested document uploaded or flagged",
-          done: documentRequests.every((d) =>
-            state.addedSources.includes(d.sourceId),
-          ),
-        },
-        {
-          label: "Extraction reviewed against each document",
-          done:
-            sources
-              .filter((s) => !s.later && needsReview(s))
-              .every((s) => state.reviewedSources.includes(s.id)) &&
-            sources.some(needsReview),
-        },
-        {
-          label: "Every area has a source-backed fact",
-          done: areas.every((a) =>
-            state.facts.some(
-              (x) => x.area === a && x.sourceId && x.value !== null,
-            ),
-          ),
-        },
-      ],
-    },
-    {
-      name: "Clarify and confirm",
-      pieces: [
-        {
-          label: "Every gap asked about or waived",
-          done: state.facts.every(gapHandled),
-        },
-        {
-          label: "Contradiction check is current",
-          done: report.ran && !report.stale,
-        },
-        {
-          label: "No open conflicts",
-          done: report.ran && !report.stale && report.open.length === 0,
-        },
-        {
-          label: "Critical facts customer-confirmed",
-          done: prep.critical === 0,
-        },
-        { label: "Late documents reviewed", done: lateReviewed },
-      ],
-    },
-    {
-      name: "Configure and test",
-      pieces: [
-        { label: "Launch prerequisites complete", done: prereqsDone(state) },
-        { label: "Agent version published", done: agentPublished(state) },
-        {
-          label: "Every usable fact configured",
-          done:
-            configurableFacts.length > 0 &&
-            configurableFacts.every((x) => x.lifecycle === "Configured"),
-        },
-        {
-          label: "Critical scenarios tested and passing",
-          done:
-            cases.some((c) => c.critical) &&
-            cases
-              .filter((c) => c.critical)
-              .every((c) => testStatus(state, c) === "Pass"),
-        },
-        {
-          label: "No failing or stale results",
-          done:
-            cases.length > 0 &&
-            !statuses.some((s) => s === "Fail" || s === "Needs retest"),
-        },
-        {
-          label: "Every test case has a passing result",
-          done: cases.length > 0 && statuses.every((s) => s === "Pass"),
-        },
-      ],
-    },
-    {
-      name: "Go live and tune",
-      pieces: [
-        {
-          label: "Launch checklist passed",
-          done: launchChecklist(state).every((c) => c.pass),
-        },
-      ],
-    },
-  ];
-  let reachedCurrent = false;
-  return defs.map((d, i) => {
-    const done = d.pieces.every((p) => p.done);
-    const status: StepStatus = reachedCurrent
-      ? "Upcoming"
-      : done
-        ? "Done"
-        : "Current";
-    if (!done) reachedCurrent = true;
-    const complete = d.pieces.filter((p) => p.done).length;
-    return {
-      n: i + 1,
-      name: d.name,
-      pieces: d.pieces,
-      status,
-      detail:
-        status === "Upcoming"
-          ? `Starts when stage ${i} is complete.`
-          : status === "Done"
-            ? "All pieces complete."
-            : `${complete} of ${d.pieces.length} pieces done.`,
-    };
-  });
-}
 export function currentStep(state: PrototypeState) {
   const steps = onboardingSteps(state);
   return steps.find((s) => s.status === "Current") ?? steps[steps.length - 1];
@@ -2015,6 +1545,366 @@ export function assignments(state: PrototypeState): Assignment[] {
 // Next actions (the team's queue)
 // ---------------------------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------------------------
+// Team roles and rules (customer side): who handles what, when, with which fallback
+// ---------------------------------------------------------------------------------------------
+
+export type RoutingRow = {
+  scenario: string;
+  who: string;
+  when: string;
+  fallback: string;
+  source: string;
+  status: "Known" | "Disputed" | "Not received";
+};
+
+/** The customer's roles and routing rules, derived from the facts received so far. */
+export function routingTable(state: PrototypeState): RoutingRow[] {
+  const f = (id: string) => factById(state, id)!;
+  const known = (id: string) =>
+    f(id).value !== null && coverageOf(f(id)) !== "empty";
+  const disputed = coverageOf(f("T2")) === "clarifying";
+  return [
+    {
+      scenario: "Office-hours calls",
+      who: known("T1") ? "Leasing desk" : "—",
+      when: known("F1") ? "Mon–Fri, 9 a.m.–5 p.m." : "—",
+      fallback: known("F1") ? "Take a message; return next business day" : "—",
+      source: known("F1") ? f("F1").anchor : "Not received",
+      status: known("F1") ? "Known" : "Not received",
+    },
+    {
+      scenario: "After-hours emergency (weekend)",
+      who: known("T2")
+        ? disputed
+          ? "On-call supervisor OR front desk (sources disagree)"
+          : (shownValue(f("T2")) ?? "")
+        : "—",
+      when: known("T4")
+        ? "Weekend schedule kept in the customer's scheduling system"
+        : "—",
+      fallback: known("T3")
+        ? "Property manager, then take a callback number"
+        : "—",
+      source: known("T2") ? f("T2").anchor : "Not received",
+      status: !known("T2") ? "Not received" : disputed ? "Disputed" : "Known",
+    },
+    {
+      scenario: "Locked out of unit",
+      who: known("S3") ? "On-call maintenance supervisor" : "—",
+      when: "After hours",
+      fallback: known("S3") ? "Property manager" : "—",
+      source: known("S3") ? f("S3").anchor : "Not received",
+      status: known("S3") ? "Known" : "Not received",
+    },
+    {
+      scenario: "Unsupported question",
+      who: "Agent",
+      when: "Any time",
+      fallback:
+        "Take a callback number; team returns the call next business day",
+      source: f("S4").anchor,
+      status: "Known",
+    },
+  ];
+}
+
+export function slackUpdate(state: PrototypeState): string {
+  const step = currentStep(state);
+  const cov = coverage(state);
+  const needed = needsFromCustomer(state);
+  return [
+    `*${state.client?.name ?? "Client"}* — stage ${step.n}/5 (${step.name})`,
+    `Coverage: ${cov.known}/${cov.total} known · ${cov.confirmed} confirmed · ${cov.empty} not received`,
+    needed.length
+      ? `Waiting on customer: ${needed.join("; ")}`
+      : "Waiting on customer: nothing",
+    `Next: ${nextActions(state)[0]?.title ?? "launch checklist"}`,
+  ].join("\n");
+}
+
+// ---------------------------------------------------------------------------------------------
+// Process log, issues
+// ---------------------------------------------------------------------------------------------
+
+export const AUTOMATION_THRESHOLD = 3;
+
+export function processCounts(state: PrototypeState) {
+  return processLog.map((p) => {
+    const live = p.live ? (state.manualLog[p.live] ?? 0) : 0;
+    const total = p.baseline + live;
+    return {
+      ...p,
+      live,
+      total,
+      candidate: !p.automatedBy && total >= AUTOMATION_THRESHOLD,
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Export: plain rows for a table tool (for example Coda) and a JSON bundle
+// ---------------------------------------------------------------------------------------------
+
+const cell = (v: unknown) => {
+  const s = String(v ?? "");
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
+
+export function exportCsv(state: PrototypeState): string {
+  const rows = exportRows(state);
+  const head = Object.keys(rows[0]);
+  return (
+    [
+      head.join(","),
+      ...rows.map((r) =>
+        head.map((h) => cell((r as Record<string, unknown>)[h])).join(","),
+      ),
+    ].join("\n") + "\n"
+  );
+}
+export function exportJson(state: PrototypeState): string {
+  return (
+    JSON.stringify(
+      {
+        customer: state.client
+          ? `Fictional ${state.client.name}`
+          : "Fictional client",
+        simulated: true,
+        stage: currentStep(state).n,
+        coverage: coverage(state),
+        facts: exportRows(state),
+        process: processCounts(state).map((p) => ({
+          step: p.label,
+          count: p.total,
+          automation_candidate: p.candidate,
+        })),
+      },
+      null,
+      2,
+    ) + "\n"
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Setup and go-live: the work that happens in the customer's agent platform. The prototype does not
+// do it; it tracks it as tasks the specialist ticks off, once clarification is complete.
+// ---------------------------------------------------------------------------------------------
+
+export const setupItems = [
+  {
+    id: "configure",
+    phase: 4,
+    label: "Configure the agent in the platform from the confirmed details",
+  },
+  { id: "phone", phase: 4, label: "Phone number selected and routing set" },
+  { id: "sms", phase: 4, label: "SMS registration (10DLC) submitted" },
+  { id: "pms", phase: 4, label: "Property-system integration connected" },
+  { id: "slack", phase: 4, label: "Slack channel for call logs connected" },
+  {
+    id: "voice",
+    phase: 4,
+    label: "Voice and language settings confirmed (English and Spanish)",
+  },
+  { id: "fair", phase: 4, label: "Fair Housing guardrails reviewed" },
+  {
+    id: "tests",
+    phase: 4,
+    label: "Run the test scenarios in the platform and record the results",
+  },
+  { id: "gate", phase: 5, label: "Pass the launch checklist" },
+  { id: "live", phase: 5, label: "Go live" },
+  {
+    id: "checkins",
+    phase: 5,
+    label: "Hold weekly check-ins for the first four weeks",
+  },
+] as const;
+
+export const setupDone = (state: PrototypeState, phase: 4 | 5) =>
+  setupItems.filter((i) => i.phase === phase).every((i) => state.setup[i.id]);
+
+/** Setup unlocks once clarification is done; go-live tasks unlock once setup is done. */
+export function setupUnlocked(state: PrototypeState, phase: 4 | 5): boolean {
+  const steps = onboardingSteps(state);
+  return phase === 4 ? steps[2].status === "Done" : steps[3].status === "Done";
+}
+
+export function toggleSetup(state: PrototypeState, id: string): PrototypeState {
+  const item = setupItems.find((i) => i.id === id);
+  if (!item || !setupUnlocked(state, item.phase)) return state;
+  return { ...state, setup: { ...state.setup, [id]: !state.setup[id] } };
+}
+
+/** The intake checks that must be clear before setup starts. */
+export function setupReadiness(state: PrototypeState) {
+  const status = readiness(state);
+  const unreviewed = state.facts.filter(
+    (f) =>
+      coverageOf(f) !== "empty" &&
+      coverageOf(f) !== "waived" &&
+      f.approval === "Not reviewed",
+  );
+  const emptyOpen = state.facts.filter((f) => coverageOf(f) === "empty");
+  const openQuestions = state.questions.filter(
+    (q) => q.status !== "Resolved" && q.status !== "Defaulted",
+  );
+  const item = (id: string, label: string, pass: boolean, detail: string) => ({
+    id,
+    label,
+    pass,
+    detail,
+  });
+  return [
+    item(
+      "preparation",
+      "Conflicts resolved and critical details confirmed",
+      status.ready,
+      status.ready ? "Nothing open." : `${status.blockers.length} open.`,
+    ),
+    item(
+      "coverage",
+      "Every required detail has a value or a waiver",
+      emptyOpen.length === 0,
+      emptyOpen.length ? `${emptyOpen.length} empty.` : "All covered.",
+    ),
+    item(
+      "reviewed",
+      "Every detail reviewed",
+      unreviewed.length === 0,
+      unreviewed.length
+        ? `${unreviewed.length} awaiting review.`
+        : "All reviewed.",
+    ),
+    item(
+      "questions",
+      "Customer questions closed",
+      openQuestions.length === 0,
+      openQuestions.length ? `${openQuestions.length} open.` : "All closed.",
+    ),
+  ];
+}
+
+// ---------------------------------------------------------------------------------------------
+// Steps with checklists, derived from the data
+// ---------------------------------------------------------------------------------------------
+
+export function onboardingSteps(state: PrototypeState): Step[] {
+  const report = consistencyReport(state);
+  const prep = readiness(state);
+  const sources = allSources(state);
+  const gapHandled = (x: Fact) =>
+    coverageOf(x) !== "empty" ||
+    state.questions.some(
+      (q) => q.factIds.includes(x.id) && SENT.includes(q.status),
+    ) ||
+    (x.id === "F4" && state.copyRequested);
+  const lateReviewed = sources
+    .filter((s) => s.later && needsReview(s))
+    .every((s) => state.reviewedSources.includes(s.id));
+  const defs: { name: string; pieces: Piece[] }[] = [
+    {
+      name: "Kickoff and client details",
+      pieces: [
+        { label: "Client details captured", done: Boolean(state.client) },
+        {
+          label: "Customer contacts cover every topic",
+          done: state.client ? topicsCovered(state.client) : false,
+        },
+        { label: "Document request sent", done: state.docsRequested },
+      ],
+    },
+    {
+      name: "Collect information",
+      pieces: [
+        {
+          label: "Every requested document uploaded or flagged",
+          done: documentRequests.every((d) =>
+            state.addedSources.includes(d.sourceId),
+          ),
+        },
+        {
+          label: "Extraction reviewed against each document",
+          done:
+            sources
+              .filter((s) => !s.later && needsReview(s))
+              .every((s) => state.reviewedSources.includes(s.id)) &&
+            sources.some(needsReview),
+        },
+        {
+          label: "Every area has a source-backed fact",
+          done: areas.every((a) =>
+            state.facts.some(
+              (x) => x.area === a && x.sourceId && x.value !== null,
+            ),
+          ),
+        },
+      ],
+    },
+    {
+      name: "Clarify and confirm",
+      pieces: [
+        {
+          label: "Every gap asked about or waived",
+          done: state.facts.every(gapHandled),
+        },
+        {
+          label: "Contradiction check is current",
+          done: report.ran && !report.stale,
+        },
+        {
+          label: "No open conflicts",
+          done: report.ran && !report.stale && report.open.length === 0,
+        },
+        {
+          label: "Critical facts customer-confirmed",
+          done: prep.critical === 0,
+        },
+        { label: "Late documents reviewed", done: lateReviewed },
+      ],
+    },
+    {
+      name: "Set up and test",
+      pieces: setupItems
+        .filter((i) => i.phase === 4)
+        .map((i) => ({ label: i.label, done: Boolean(state.setup[i.id]) })),
+    },
+    {
+      name: "Go live and tune",
+      pieces: setupItems
+        .filter((i) => i.phase === 5)
+        .map((i) => ({ label: i.label, done: Boolean(state.setup[i.id]) })),
+    },
+  ];
+  let reachedCurrent = false;
+  return defs.map((d, i) => {
+    const done = d.pieces.every((p) => p.done);
+    const status: StepStatus = reachedCurrent
+      ? "Upcoming"
+      : done
+        ? "Done"
+        : "Current";
+    if (!done) reachedCurrent = true;
+    const complete = d.pieces.filter((p) => p.done).length;
+    return {
+      n: i + 1,
+      name: d.name,
+      pieces: d.pieces,
+      status,
+      detail:
+        status === "Upcoming"
+          ? `Starts when stage ${i} is complete.`
+          : status === "Done"
+            ? "All pieces complete."
+            : `${complete} of ${d.pieces.length} pieces done.`,
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Next actions (the team's queue)
+// ---------------------------------------------------------------------------------------------
+
 export type NextAction = {
   id: string;
   tone: "red" | "orange" | "blue" | "green";
@@ -2024,11 +1914,7 @@ export type NextAction = {
   owner: string;
   due: string;
   button: string;
-  target: {
-    stage?: 1 | 2 | 3 | 4 | 5;
-    view?: "spec" | "process";
-    factId?: string;
-  };
+  target: { stage?: 1 | 2 | 3 | 4 | 5 };
 };
 
 export function nextActions(state: PrototypeState): NextAction[] {
@@ -2046,7 +1932,7 @@ export function nextActions(state: PrototypeState): NextAction[] {
       title: "Send the document request to the customer",
       subtitle: "Each document goes to the contact who owns it",
       due: "Today",
-      button: "Open stage 1",
+      button: "Open",
       target: { stage: 1 },
     });
   const missing = documentRequests.filter(
@@ -2060,7 +1946,7 @@ export function nextActions(state: PrototypeState): NextAction[] {
       title: `Upload the ${missing.length} document${missing.length === 1 ? "" : "s"} received so far`,
       subtitle: "Each upload is read into the spec with citations",
       due: "As they arrive",
-      button: "Open stage 2",
+      button: "Open",
       target: { stage: 2 },
     });
   const unreviewed = sources.filter(
@@ -2075,7 +1961,7 @@ export function nextActions(state: PrototypeState): NextAction[] {
       subtitle: "Confirm what was read matches the document",
       due: "Before the contradiction check",
       button: "Review",
-      target: { stage: unreviewed.every((s) => s.later) ? 3 : 2 },
+      target: { stage: 2 },
     });
   if (state.addedSources.length && (!report.ran || report.stale))
     a({
@@ -2089,7 +1975,7 @@ export function nextActions(state: PrototypeState): NextAction[] {
         ? "A new source arrived after the last check"
         : "Sources and draft prompts have not been compared",
       due: "Before asking the customer",
-      button: "Open check",
+      button: "Open",
       target: { stage: 3 },
     });
   for (const c of report.open)
@@ -2170,128 +2056,36 @@ export function nextActions(state: PrototypeState): NextAction[] {
       button: "Open",
       target: { stage: 3 },
     });
-  if (readiness(state).ready) {
-    const toConfigure = state.facts.filter(
-      (f) =>
-        configurable(f) &&
-        f.lifecycle !== "Configured" &&
-        (!f.critical || isConfirmed(f)),
-    );
-    if (!prereqsDone(state))
-      a({
-        id: "prereqs",
-        tone: "orange",
-        icon: "☑",
-        title: `Complete ${prereqItems.filter((p) => !state.prereqs[p.id]).length} launch prerequisites`,
-        subtitle: "Phone number, SMS registration, integration, Slack logs",
-        due: "Before launch",
-        button: "Open stage 4",
-        target: { stage: 4 },
-      });
-    if (toConfigure.length)
-      a({
-        id: "configure",
-        tone: "orange",
-        icon: "⚙",
-        title: `Configure ${toConfigure.length} confirmed fact${toConfigure.length === 1 ? "" : "s"} in the agent`,
-        subtitle: "Build the agent from confirmed facts only",
-        due: "Before testing",
-        button: "Open stage 4",
-        target: { stage: 4 },
-      });
-    const waiting = testCases(state).filter((t) =>
-      ["Not run", "Needs retest", "Fail"].includes(testStatus(state, t)),
-    );
-    if (!toConfigure.length && !agentPublished(state))
-      a({
-        id: "publish",
-        tone: "orange",
-        icon: "⬆",
-        title: "Publish the agent version",
-        subtitle:
-          "Lock the configured draft so tests run against a fixed version",
-        due: "Before testing",
-        button: "Open stage 4",
-        target: { stage: 4 },
-      });
-    if (!toConfigure.length && agentPublished(state) && waiting.length)
-      a({
-        id: "tests",
-        tone: "orange",
-        icon: "✓",
-        title: `Record ${waiting.length} test result${waiting.length === 1 ? "" : "s"}`,
-        subtitle:
-          "Try each scenario against the configured agent, then record the outcome",
-        due: "Before launch",
-        button: "Open stage 4",
-        target: { stage: 4 },
-      });
+  if (setupUnlocked(state, 4) && !setupDone(state, 4)) {
+    const left = setupItems.filter(
+      (i) => i.phase === 4 && !state.setup[i.id],
+    ).length;
+    a({
+      id: "setup",
+      tone: "orange",
+      icon: "☑",
+      title: `Complete ${left} setup task${left === 1 ? "" : "s"} in the platform`,
+      subtitle: "Configure, connect, then test before going live",
+      due: "Before launch",
+      button: "Open",
+      target: { stage: 4 },
+    });
+  } else if (setupUnlocked(state, 5) && !setupDone(state, 5)) {
+    const left = setupItems.filter(
+      (i) => i.phase === 5 && !state.setup[i.id],
+    ).length;
+    a({
+      id: "golive",
+      tone: "orange",
+      icon: "▶",
+      title: `Finish ${left} go-live task${left === 1 ? "" : "s"}`,
+      subtitle: "Pass the launch checklist, go live, schedule check-ins",
+      due: "Go-live",
+      button: "Open",
+      target: { stage: 5 },
+    });
   }
   return actions;
-}
-
-// ---------------------------------------------------------------------------------------------
-// Team roles and rules (customer side): who handles what, when, with which fallback
-// ---------------------------------------------------------------------------------------------
-
-export type RoutingRow = {
-  scenario: string;
-  who: string;
-  when: string;
-  fallback: string;
-  source: string;
-  status: "Known" | "Disputed" | "Not received";
-};
-
-/** The customer's roles and routing rules, derived from the facts received so far. */
-export function routingTable(state: PrototypeState): RoutingRow[] {
-  const f = (id: string) => factById(state, id)!;
-  const known = (id: string) =>
-    f(id).value !== null && coverageOf(f(id)) !== "empty";
-  const disputed = coverageOf(f("T2")) === "clarifying";
-  return [
-    {
-      scenario: "Office-hours calls",
-      who: known("T1") ? "Leasing desk" : "—",
-      when: known("F1") ? "Mon–Fri, 9 a.m.–5 p.m." : "—",
-      fallback: known("F1") ? "Take a message; return next business day" : "—",
-      source: known("F1") ? f("F1").anchor : "Not received",
-      status: known("F1") ? "Known" : "Not received",
-    },
-    {
-      scenario: "After-hours emergency (weekend)",
-      who: known("T2")
-        ? disputed
-          ? "On-call supervisor OR front desk (sources disagree)"
-          : (shownValue(f("T2")) ?? "")
-        : "—",
-      when: known("T4")
-        ? "Weekend schedule kept in the customer's scheduling system"
-        : "—",
-      fallback: known("T3")
-        ? "Property manager, then take a callback number"
-        : "—",
-      source: known("T2") ? f("T2").anchor : "Not received",
-      status: !known("T2") ? "Not received" : disputed ? "Disputed" : "Known",
-    },
-    {
-      scenario: "Locked out of unit",
-      who: known("S3") ? "On-call maintenance supervisor" : "—",
-      when: "After hours",
-      fallback: known("S3") ? "Property manager" : "—",
-      source: known("S3") ? f("S3").anchor : "Not received",
-      status: known("S3") ? "Known" : "Not received",
-    },
-    {
-      scenario: "Unsupported question",
-      who: "Agent",
-      when: "Any time",
-      fallback:
-        "Take a callback number; team returns the call next business day",
-      source: f("S4").anchor,
-      status: "Known",
-    },
-  ];
 }
 
 export function weeklyCheckIn(state: PrototypeState): string {
@@ -2303,18 +2097,12 @@ export function weeklyCheckIn(state: PrototypeState): string {
     .slice(0, 3)
     .map((a) => a.title);
   const status = readiness(state);
-  const risks = [
-    ...status.blockers,
-    ...status.risks,
-    ...testCases(state)
-      .filter((t) => testStatus(state, t) === "Fail")
-      .map((t) => `Failing test ${t.id}`),
-  ];
+  const risks = [...status.blockers, ...status.risks];
   return [
     `# Weekly check-in · ${state.client?.name ?? "Client"} (fictional)`,
     "",
     `Progress: stage ${step.n} of 5, ${step.name}. ${step.detail}`,
-    `Coverage: ${cov.known} of ${cov.total} required facts known, ${cov.confirmed} confirmed by you, ${cov.clarifying} awaiting clarification, ${cov.empty} not received.`,
+    `Coverage: ${cov.known} of ${cov.total} required details known, ${cov.confirmed} confirmed by you, ${cov.clarifying} awaiting clarification, ${cov.empty} not received.`,
     "",
     "## Needed from you",
     ...(needed.length ? needed.map((n) => `- ${n}`) : ["- Nothing right now."]),
@@ -2322,7 +2110,7 @@ export function weeklyCheckIn(state: PrototypeState): string {
     "## We are working on",
     ...(working.length
       ? working.map((w) => `- ${w}`)
-      : ["- Preparing the launch checklist."]),
+      : ["- Preparing for go-live."]),
     "",
     "## Risks",
     ...(risks.length ? risks.map((r) => `- ${r}`) : ["- None open."]),
@@ -2334,25 +2122,10 @@ export function weeklyCheckIn(state: PrototypeState): string {
   ].join("\n");
 }
 
-export function slackUpdate(state: PrototypeState): string {
-  const step = currentStep(state);
-  const cov = coverage(state);
-  const needed = needsFromCustomer(state);
-  return [
-    `*${state.client?.name ?? "Client"}* — stage ${step.n}/5 (${step.name})`,
-    `Coverage: ${cov.known}/${cov.total} known · ${cov.confirmed} confirmed · ${cov.empty} not received`,
-    needed.length
-      ? `Waiting on customer: ${needed.join("; ")}`
-      : "Waiting on customer: nothing",
-    `Next: ${nextActions(state)[0]?.title ?? "launch checklist"}`,
-  ].join("\n");
-}
-
 // ---------------------------------------------------------------------------------------------
-// Process log, issues
+// Process log and export
 // ---------------------------------------------------------------------------------------------
 
-export const AUTOMATION_THRESHOLD = 3;
 export const processLog = [
   {
     id: "compare",
@@ -2376,32 +2149,18 @@ export const processLog = [
     live: null,
   },
   {
-    id: "tests",
-    label: "Write test cases per scenario",
+    id: "chase",
+    label: "Chase a customer for a missing document",
     baseline: 4,
-    automatedBy: "QA generator",
+    automatedBy: null,
     live: null,
   },
   {
-    id: "configure",
-    label: "Copy a confirmed fact into the agent configuration",
-    baseline: 2,
-    automatedBy: null,
-    live: "configure",
-  },
-  {
     id: "review-fact",
-    label: "Review an extracted fact against its source",
+    label: "Review an extracted detail against its source",
     baseline: 1,
     automatedBy: null,
     live: "review-fact",
-  },
-  {
-    id: "record-test",
-    label: "Record a test result",
-    baseline: 0,
-    automatedBy: null,
-    live: "record-test",
   },
   {
     id: "roster",
@@ -2411,131 +2170,31 @@ export const processLog = [
     live: null,
   },
 ] as const;
-export function processCounts(state: PrototypeState) {
-  return processLog.map((p) => {
-    const live = p.live ? (state.manualLog[p.live] ?? 0) : 0;
-    const total = p.baseline + live;
-    return {
-      ...p,
-      live,
-      total,
-      candidate: !p.automatedBy && total >= AUTOMATION_THRESHOLD,
-    };
-  });
-}
+
 export const stageDays = [
   { name: "Kickoff and client details", days: "2 days" },
   { name: "Collect information", days: "4 days" },
   { name: "Clarify and confirm", days: "in progress" },
-  { name: "Configure and test", days: "not started" },
+  { name: "Set up and test", days: "not started" },
   { name: "Go live and tune", days: "not started" },
 ];
-export const seedIssues: Issue[] = [
-  {
-    id: "i1",
-    text: "A caller asked about guest parking and the agent guessed.",
-    factId: "F1",
-    expected: "Says the team will follow up; does not guess.",
-  },
-  {
-    id: "i2",
-    text: "An after-hours caller was not offered a callback number.",
-    factId: "T3",
-    expected: "Offers a callback number when the supervisor is unavailable.",
-  },
-  {
-    id: "i3",
-    text: "A lookup timed out and the agent never reported back.",
-    factId: "I1",
-    expected: "Takes a message when the lookup is unavailable.",
-  },
-];
-export function convertIssue(
-  state: PrototypeState,
-  id: string,
-): PrototypeState {
-  const issue = seedIssues.find((i) => i.id === id);
-  if (!issue || state.extraTests.some((t) => t.id === `T-${id}`)) return state;
-  return {
-    ...state,
-    extraTests: [
-      ...state.extraTests,
-      {
-        id: `T-${id}`,
-        factId: issue.factId,
-        kind: "From issue",
-        scenario: issue.text,
-        expected: issue.expected,
-        critical: false,
-      },
-    ],
-  };
-}
 
-// ---------------------------------------------------------------------------------------------
-// Export: plain rows for a table tool (for example Coda) and a JSON bundle
-// ---------------------------------------------------------------------------------------------
-
-const cell = (v: unknown) => {
-  const s = String(v ?? "");
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-};
 export function exportRows(state: PrototypeState) {
-  const cases = testCases(state);
-  return state.facts.map((f) => {
-    const mine = cases.filter((t) => t.factId === f.id);
-    return {
-      fact_id: f.id,
-      area: f.area,
-      fact: f.label,
-      lands_in: f.lands,
-      value: shownValue(f) ?? "",
-      status: shownLifecycle(state, f),
-      approval: f.approval,
-      owner: f.owner,
-      source: f.sourceId
-        ? (allSources(state).find((s) => s.id === f.sourceId)?.title ??
-          f.sourceId)
-        : "",
-      citation: f.anchor,
-      critical: f.critical ? "yes" : "no",
-      waived: f.waived?.reason ?? "",
-      tests_passing: mine.filter((t) => testStatus(state, t) === "Pass").length,
-      tests_total: mine.length,
-    };
-  });
-}
-export function exportCsv(state: PrototypeState): string {
-  const rows = exportRows(state);
-  const head = Object.keys(rows[0]);
-  return (
-    [
-      head.join(","),
-      ...rows.map((r) =>
-        head.map((h) => cell((r as Record<string, unknown>)[h])).join(","),
-      ),
-    ].join("\n") + "\n"
-  );
-}
-export function exportJson(state: PrototypeState): string {
-  return (
-    JSON.stringify(
-      {
-        customer: state.client
-          ? `Fictional ${state.client.name}`
-          : "Fictional client",
-        simulated: true,
-        stage: currentStep(state).n,
-        coverage: coverage(state),
-        facts: exportRows(state),
-        process: processCounts(state).map((p) => ({
-          step: p.label,
-          count: p.total,
-          automation_candidate: p.candidate,
-        })),
-      },
-      null,
-      2,
-    ) + "\n"
-  );
+  return state.facts.map((f) => ({
+    fact_id: f.id,
+    area: f.area,
+    fact: f.label,
+    lands_in: f.lands,
+    value: shownValue(f) ?? "",
+    status: f.waived ? "Waived" : f.lifecycle,
+    approval: f.approval,
+    owner: f.owner,
+    source: f.sourceId
+      ? (allSources(state).find((s) => s.id === f.sourceId)?.title ??
+        f.sourceId)
+      : "",
+    citation: f.anchor,
+    critical: f.critical ? "yes" : "no",
+    waived: f.waived?.reason ?? "",
+  }));
 }

@@ -824,7 +824,7 @@
 .v3 .v3-taskhead,
 .v3 .v3-task {
   display: grid;
-  grid-template-columns: 22px minmax(0, 1fr) 150px 70px 150px 44px;
+  grid-template-columns: 22px minmax(0, 1fr) 150px 70px 130px 92px;
   gap: 10px;
   align-items: center;
   padding: 8px 14px;
@@ -1179,59 +1179,6 @@
 }
 
 /* ------------------------------------------------------------ agent, tests */
-.v3 .v3-agenthead {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 16px;
-}
-.v3 .v3-cfg {
-  display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) auto 130px;
-  gap: 12px;
-  align-items: center;
-  padding: 10px 0;
-  border-top: 1px solid var(--line);
-}
-.v3 .v3-cfg .id {
-  color: var(--faint);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-.v3 .v3-cfg .body small {
-  display: block;
-  color: var(--muted);
-}
-.v3 .v3-cfg .body strong {
-  font-weight: 500;
-}
-.v3 .v3-version {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 0;
-  border-top: 1px solid var(--line);
-}
-.v3 .v3-version:first-of-type {
-  border-top: 0;
-}
-.v3 .v3-version small {
-  display: block;
-  color: var(--muted);
-}
-.v3 .v3-checks {
-  list-style: none;
-  display: grid;
-  gap: 8px;
-  margin-top: 10px;
-}
-.v3 .v3-checks label {
-  display: flex;
-  gap: 8px;
-  align-items: flex-start;
-  cursor: pointer;
-}
 .v3 .v3-gate {
   list-style: none;
   display: grid;
@@ -1252,79 +1199,6 @@
 .v3 .v3-gate small {
   display: block;
   color: var(--muted);
-}
-.v3 .v3-locked {
-  display: flex;
-  gap: 14px;
-}
-.v3 .v3-locked .lock {
-  font-size: 22px;
-}
-.v3 .v3-locked ul {
-  color: var(--muted);
-  padding-left: 18px;
-  margin: 6px 0;
-}
-.v3 .v3-group {
-  background: #fff;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  margin-bottom: 10px;
-}
-.v3 .v3-scenario {
-  border-top: 1px solid var(--line);
-  background: #fff;
-}
-.v3 .v3-scenario > header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 14px;
-  background: var(--soft);
-}
-.v3 .v3-scenario > header .v3-mono {
-  margin: 0;
-}
-.v3 .v3-scenario .rows .row {
-  display: grid;
-  grid-template-columns: 90px 1fr;
-  gap: 10px;
-  padding: 7px 14px;
-}
-.v3 .v3-scenario .rows .label {
-  font:
-    600 10.5px/1.7 ui-monospace,
-    Consolas,
-    monospace;
-  letter-spacing: 0.05em;
-  color: var(--faint);
-}
-.v3 .v3-scenario > footer {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  align-items: center;
-  padding: 8px 14px 12px;
-}
-.v3 .v3-scenario > footer input {
-  flex: 1 1 200px;
-  max-width: 320px;
-}
-.v3 .v3-scenario.red {
-  box-shadow: inset 3px 0 0 #f04438;
-}
-.v3 .v3-scenario.red > header {
-  background: #fff5f4;
-}
-.v3 .v3-scenario.amber {
-  box-shadow: inset 3px 0 0 #f5b83d;
-}
-.v3 .v3-scenario.amber > header {
-  background: #fffaf0;
-}
-.v3 .v3-scenario.green {
-  box-shadow: inset 3px 0 0 #12b76a;
 }
 
 /* ------------------------------------------------------------ requirements */

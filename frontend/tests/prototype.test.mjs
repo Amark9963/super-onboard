@@ -2,7 +2,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   addSource,
-  agentStatus,
   applyDefault,
   assignments,
   consistencyReport,
@@ -14,34 +13,31 @@ import {
   documentRequests,
   exportCsv,
   initialState,
-  launchChecklist,
-  markConfigured,
   nextActions,
   onboardingSteps,
-  prereqItems,
-  publishAgent,
   processCounts,
   readiness,
   recipientsInUse,
-  recordTest,
   reopenQuestion,
   requestReadableCopy,
   resolveInternally,
   reviewAnswer,
+  reviewFact,
   reviewSource,
   routingTable,
   runConsistencyCheck,
   sendDocumentRequest,
   sendRequest,
+  setupItems,
+  setupReadiness,
+  setupUnlocked,
   submitAnswer,
-  testCases,
-  testStatus,
-  togglePrereq,
+  toggleSetup,
   updateQuestion,
   uploadSource,
   waiveFact,
   weeklyCheckIn,
-  convertIssue,
+  currentStep as step,
 } from "../app/prototype/state.ts";
 import { diffActivity } from "../app/prototype/activity.ts";
 import { phaseProgress, planTasks } from "../app/prototype/plan.ts";
@@ -63,8 +59,8 @@ const approveAndSend = (s) => {
 const answer = (s, id, text) =>
   reviewAnswer(submitAnswer(s, id, text, "answer"), id);
 
-/** An onboarding with every documented step done except configuration and tests. */
-function prepared() {
+/** An onboarding with intake and clarification finished; setup in the platform is still to do. */
+function clarified() {
   let s = sendDocumentRequest(started());
   s = upload(s, "transcript", "sop", "roster", "faq", "scan", "prompt-draft");
   for (const id of ["transcript", "sop", "roster", "faq"])
@@ -81,7 +77,6 @@ function prepared() {
   s = answer(s, "q-integration", "Maya authorizes read-only lookups");
   for (const id of ["G2", "S3", "F4"])
     s = waiveFact(s, id, "Not needed for launch");
-  for (const p of prereqItems) s = togglePrereq(s, p.id);
   return s;
 }
 
@@ -137,6 +132,10 @@ test("reviewing a document marks only the facts it filled", () => {
   );
   assert.equal(s.facts.find((f) => f.id === "F1").approval, "Not reviewed");
   assert.equal(reviewSource(s, "roster"), s);
+  assert.equal(
+    reviewFact(s, "F1").facts.find((f) => f.id === "F1").approval,
+    "Specialist reviewed",
+  );
 });
 
 test("the contradiction check flags the facts, drafts questions and assigns them by topic", () => {
@@ -352,156 +351,80 @@ test("the customer's roles and routing rules are derived and show disputes", () 
   assert.match(row.who, /sources disagree/);
 });
 
-test("test results go stale when a fact changes", () => {
-  let s = prepared();
-  assert.equal(readiness(s).ready, true);
-  const tc = testCases(s).find(
-    (t) => t.factId === "T2" && t.kind === "Emergency",
-  );
-  assert.ok(tc && tc.critical);
-  s = recordTest(s, tc.id, "Pass", "tried it");
-  assert.equal(testStatus(s, tc), "Pass");
-  s = answer(s, "q-emergency", "Front desk first");
-  assert.equal(testStatus(s, tc), "Needs retest");
+test("setup and go-live are tasks that unlock in order, and finish the onboarding", () => {
+  let s = started();
+  assert.equal(setupUnlocked(s, 4), false);
   assert.equal(
-    launchChecklist(s).find((c) => c.id === "no-retest").pass,
-    false,
-  );
-});
-
-test("launch needs prerequisites, configuration, a published version and passing tests", () => {
-  let s = prepared();
-  assert.equal(nextActions(s)[0].id, "configure");
-  for (const f of s.facts) s = markConfigured(s, f.id);
-  assert.equal(nextActions(s)[0].id, "publish");
-  assert.equal(currentStep(s).n, 4);
-  assert.equal(testCases(s).length > 0, true);
-  s = publishAgent(s);
-  assert.equal(nextActions(s)[0].id, "tests");
-  assert.equal(
-    launchChecklist(s).every((c) => c.pass),
-    false,
-  );
-  for (const t of testCases(s)) s = recordTest(s, t.id, "Pass");
-  assert.equal(
-    launchChecklist(s).every((c) => c.pass),
-    true,
-  );
-  assert.equal(currentStep(s).n, 5);
-  const without = togglePrereq(s, "phone");
-  assert.equal(
-    launchChecklist(without).find((c) => c.id === "prereqs").pass,
-    false,
-  );
-});
-
-test("publishing locks a version and later changes make the draft diverge", () => {
-  let s = prepared();
-  assert.equal(publishAgent(s), s, "nothing is configured yet");
-  for (const f of s.facts) s = markConfigured(s, f.id);
-  assert.equal(agentStatus(s).label, "Draft");
-  s = publishAgent(s);
-  assert.equal(agentStatus(s).label, "Published v1");
-  assert.equal(publishAgent(s), s, "no changes since publish");
-  s = answer(s, "q-emergency", "Front desk first");
-  assert.equal(agentStatus(s).unpublished, true);
-  assert.equal(
-    launchChecklist(s).find((c) => c.id === "published").pass,
-    false,
-  );
-});
-
-test("the process log counts real manual actions", () => {
-  let s = prepared();
-  assert.equal(
-    processCounts(s).find((p) => p.id === "configure").candidate,
-    false,
-  );
-  s = markConfigured(s, "T3");
-  assert.equal(
-    processCounts(s).find((p) => p.id === "configure").candidate,
-    true,
-    "2 earlier + 1 now = 3",
-  );
-  assert.ok(processCounts(s).find((p) => p.id === "review-fact").live > 0);
-});
-
-test("post-launch issues become test cases once; outputs derive from state", () => {
-  const once = convertIssue(initialState, "i1");
-  assert.equal(
-    testCases(once).some((t) => t.id === "T-i1"),
-    true,
-  );
-  assert.equal(convertIssue(once, "i1"), once);
-  assert.match(weeklyCheckIn(started()), /stage 1 of 5/);
-  const csv = exportCsv(started()).trim().split("\n");
-  assert.equal(csv.length, 21);
-  assert.match(csv[0], /^fact_id,area,fact,lands_in,value/);
-});
-
-// Same as the app: every update goes through diffActivity.
-const track = (s, fn) => diffActivity(s, fn(s));
-
-test("the activity feed records who did what, on which side, without any action knowing about it", () => {
-  let s = track(initialState, () => started());
-  s = track(s, sendDocumentRequest);
-  s = track(s, (x) => uploadSource(x, "sop"));
-  s = track(s, (x) => uploadSource(x, "transcript"));
-  s = track(s, runConsistencyCheck);
-  const texts = s.activity.map((e) => e.text);
-  assert.ok(texts[0].startsWith("Created the onboarding"));
-  const sop = s.activity.find((e) => e.text.includes("operations handbook"));
-  assert.deepEqual([sop.actor.name, sop.actor.side], ["Maya Chen", "customer"]);
-  const call = s.activity.find((e) => e.text.includes("kickoff call"));
-  assert.equal(call.actor.side, "team");
-  assert.ok(
-    s.activity.some(
-      (e) =>
-        e.actor.side === "system" &&
-        e.text.startsWith("Contradiction check: 1 conflict"),
-    ),
-  );
-  assert.ok(
-    s.activity.some(
-      (e) =>
-        e.actor.side === "system" &&
-        e.text.startsWith("Drafted a question for Maya Chen"),
-    ),
-  );
-  assert.equal(new Set(s.activity.map((e) => e.id)).size, s.activity.length);
-  assert.equal(
-    track(s, (x) => x),
+    toggleSetup(s, "phone"),
     s,
-    "no change, no events",
+    "locked until clarification is done",
+  );
+  s = clarified();
+  assert.equal(
+    setupReadiness(s).every((c) => c.pass),
+    true,
+  );
+  assert.equal(currentStep(s).n, 4);
+  assert.equal(nextActions(s)[0].id, "setup");
+  assert.equal(toggleSetup(s, "live"), s, "go-live tasks wait for setup");
+  for (const i of setupItems.filter((x) => x.phase === 4))
+    s = toggleSetup(s, i.id);
+  assert.equal(currentStep(s).n, 5);
+  assert.equal(nextActions(s)[0].id, "golive");
+  for (const i of setupItems.filter((x) => x.phase === 5))
+    s = toggleSetup(s, i.id);
+  assert.equal(
+    onboardingSteps(s).every((x) => x.status === "Done"),
+    true,
+  );
+  assert.equal(
+    phaseProgress(s).every((p) => p.status === "Done"),
+    true,
+  );
+  assert.equal(nextActions(s).length, 0);
+  const undone = toggleSetup(s, "phone");
+  assert.equal(undone.setup.phone, false, "a task can be undone");
+});
+
+test("a new customer answer after clarification reopens the readiness checks", () => {
+  let s = clarified();
+  s = answer(s, "q-emergency", "Front desk first");
+  assert.equal(
+    setupReadiness(s).every((c) => c.pass),
+    true,
+    "an approved answer is still clear",
+  );
+  s = reopenQuestion(s, "q-emergency");
+  s = approveAndSend(s);
+  assert.equal(
+    setupReadiness(s).some((c) => !c.pass),
+    true,
   );
 });
 
-test("customer answers and repeated test results are logged compactly", () => {
-  let s = track(initialState, () => started());
-  s = track(s, (x) => uploadSource(uploadSource(x, "transcript"), "sop"));
-  s = track(s, runConsistencyCheck);
-  s = track(s, (x) =>
-    updateQuestion(x, "q-emergency", { status: "Ready to send" }),
+test("the process log counts real manual actions and flags three-times candidates", () => {
+  const before = processCounts(initialState);
+  assert.equal(
+    before.find((p) => p.id === "chase").candidate,
+    true,
+    "4 earlier times and not automated",
   );
-  s = track(s, (x) => sendRequest(x, "Maya Chen", ["q-emergency"]));
-  s = track(s, (x) =>
-    submitAnswer(x, "q-emergency", "On-call first", "answer"),
+  assert.equal(
+    before.find((p) => p.id === "compare").candidate,
+    false,
+    "already automated",
   );
-  const answered = s.activity.find((e) => e.kind === "answer");
-  assert.deepEqual(
-    [answered.actor.name, answered.actor.side],
-    ["Maya Chen", "customer"],
+  assert.equal(
+    before.find((p) => p.id === "review-fact").candidate,
+    false,
+    "1 earlier time is below the threshold",
   );
-  s = track(s, (x) => reviewAnswer(x, "q-emergency"));
-  assert.ok(s.activity.some((e) => e.kind === "approve"));
-  let t = prepared();
-  for (const c of testCases(t).slice(0, 4))
-    t = track(t, (x) => recordTest(x, c.id, "Pass"));
-  assert.equal(t.activity.filter((e) => e.kind === "test").length, 1);
-  assert.match(
-    t.activity.find((e) => e.kind === "test").text,
-    /Recorded 4 test results/,
-  );
+  let s = upload(started(), "roster", "faq");
+  s = reviewSource(s, "roster");
+  s = reviewFact(s, "F1");
+  const review = processCounts(s).find((p) => p.id === "review-fact");
+  assert.ok(review.live >= 3);
+  assert.equal(review.candidate, true);
 });
 
 test("the plan is derived: every task has an owner, and the customer's tasks name a real contact", () => {
@@ -533,15 +456,94 @@ test("the plan is derived: every task has an owner, and the customer's tasks nam
     [q.side, q.assignee, q.status],
     ["customer", "Maya Chen", "In progress"],
   );
+  const setupTask = planTasks(started()).find((t) => t.id === "p4-phone");
+  assert.deepEqual(
+    [setupTask.manual.id, setupTask.manual.locked],
+    ["phone", true],
+  );
+  assert.equal(
+    planTasks(clarified()).find((t) => t.id === "p4-phone").manual.locked,
+    false,
+  );
 });
 
-test("a finished onboarding shows every phase done", () => {
-  let s = prepared();
-  for (const f of s.facts) s = markConfigured(s, f.id);
-  s = publishAgent(s);
-  for (const t of testCases(s)) s = recordTest(s, t.id, "Pass");
-  const done = phaseProgress(s)
-    .filter((p) => p.n <= 4)
-    .every((p) => p.status === "Done");
-  assert.equal(done, true);
+// Same as the app: every update goes through diffActivity.
+const track = (s, fn) => diffActivity(s, fn(s));
+
+test("the activity feed records who did what, on which side, without any action knowing about it", () => {
+  let s = track(initialState, () => started());
+  s = track(s, sendDocumentRequest);
+  s = track(s, (x) => uploadSource(x, "sop"));
+  s = track(s, (x) => uploadSource(x, "transcript"));
+  s = track(s, (x) => uploadSource(x, "faq"));
+  s = track(s, runConsistencyCheck);
+  const texts = s.activity.map((e) => e.text);
+  assert.ok(texts[0].startsWith("Created the onboarding"));
+  const sop = s.activity.find((e) => e.text.includes("operations handbook"));
+  assert.deepEqual([sop.actor.name, sop.actor.side], ["Maya Chen", "customer"]);
+  assert.equal(
+    s.activity.find((e) => e.text.includes("kickoff call")).actor.side,
+    "team",
+  );
+  assert.equal(
+    s.activity.find((e) => e.text.includes("FAQ snapshot")).actor.side,
+    "system",
+    "a public website is not a person",
+  );
+  assert.ok(
+    s.activity.some(
+      (e) =>
+        e.actor.side === "system" &&
+        e.text.startsWith("Contradiction check: 1 conflict"),
+    ),
+  );
+  assert.ok(
+    s.activity.some(
+      (e) =>
+        e.actor.side === "system" &&
+        e.text.startsWith("Drafted a question for Maya Chen"),
+    ),
+  );
+  assert.match(
+    s.activity.find((e) => e.text.includes("FAQ snapshot")).text,
+    /1 setup detail read/,
+  );
+  assert.equal(new Set(s.activity.map((e) => e.id)).size, s.activity.length);
+  assert.equal(
+    track(s, (x) => x),
+    s,
+    "no change, no events",
+  );
+});
+
+test("customer answers and setup tasks are logged", () => {
+  let s = track(initialState, () => started());
+  s = track(s, (x) => uploadSource(uploadSource(x, "transcript"), "sop"));
+  s = track(s, runConsistencyCheck);
+  s = track(s, (x) =>
+    updateQuestion(x, "q-emergency", { status: "Ready to send" }),
+  );
+  s = track(s, (x) => sendRequest(x, "Maya Chen", ["q-emergency"]));
+  s = track(s, (x) =>
+    submitAnswer(x, "q-emergency", "On-call first", "answer"),
+  );
+  const answered = s.activity.find((e) => e.kind === "answer");
+  assert.deepEqual(
+    [answered.actor.name, answered.actor.side],
+    ["Maya Chen", "customer"],
+  );
+  s = track(s, (x) => reviewAnswer(x, "q-emergency"));
+  assert.ok(s.activity.some((e) => e.kind === "approve"));
+  let t = track(initialState, () => clarified());
+  t = track(t, (x) => toggleSetup(x, "phone"));
+  assert.ok(t.activity.at(-1).text.startsWith("Completed: Phone number"));
+});
+
+test("outputs: the check-in and CSV rows are derived from state", () => {
+  assert.match(weeklyCheckIn(started()), /stage 1 of 5/);
+  const csv = exportCsv(started()).trim().split("\n");
+  assert.equal(csv.length, 21);
+  assert.match(csv[0], /^fact_id,area,fact,lands_in,value/);
+  assert.ok(!csv[0].includes("tests"), "no test columns any more");
+  assert.equal(step(started()).n, 1);
 });

@@ -122,7 +122,7 @@ export default function Prototype() {
           <i className="v3-logo-tile">so</i>
           <span>
             <strong>super onboard</strong>
-            <small>Requirements · Config · Tests</small>
+            <small>Requirements · Clarifications</small>
           </span>
         </div>
         <button

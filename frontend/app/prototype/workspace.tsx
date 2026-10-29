@@ -7,7 +7,9 @@ import {
   nextActions,
   runConsistencyCheck,
   sendDocumentRequest,
+  setupReadiness,
   slackUpdate,
+  toggleSetup,
   topics,
   weeklyCheckIn,
   type NextAction,
@@ -25,7 +27,6 @@ import {
 } from "./ui";
 import { DocumentsTab } from "./documents";
 import { ClarificationsTab } from "./clarifications";
-import { AgentTab, TestsTab } from "./agent";
 import { RequirementsTab } from "./requirements";
 
 /** Where a next action is worked on. */
@@ -42,8 +43,6 @@ export function tabFor(a: NextAction): Tab {
     a.id.startsWith("gap-")
   )
     return "clarifications";
-  if (["prereqs", "configure", "publish"].includes(a.id)) return "agent";
-  if (a.id === "tests") return "tests";
   return "plan";
 }
 
@@ -133,8 +132,6 @@ export default function Workspace({
         {tab === "documents" && <DocumentsTab ctx={ctx} />}
         {tab === "clarifications" && <ClarificationsTab ctx={ctx} />}
         {tab === "requirements" && <RequirementsTab ctx={ctx} />}
-        {tab === "agent" && <AgentTab ctx={ctx} />}
-        {tab === "tests" && <TestsTab ctx={ctx} />}
         {tab === "activity" && <ActivityTab ctx={ctx} />}
       </div>
     </>
@@ -152,9 +149,24 @@ function TaskRow({ t, ctx }: { t: Task; ctx: Ctx }) {
         {t.side === "customer" ? "Customer" : "Our team"}
       </span>
       <span className="due">{t.due}</span>
-      <button className="v3-link" onClick={() => ctx.go("client", t.tab)}>
-        Open
-      </button>
+      {t.manual ? (
+        <button
+          className={`v3-btn ${t.status === "Done" ? "secondary" : ""}`}
+          disabled={t.manual.locked}
+          title={
+            t.manual.locked
+              ? "Unlocks when the previous phase is complete"
+              : undefined
+          }
+          onClick={() => ctx.update((s) => toggleSetup(s, t.manual!.id))}
+        >
+          {t.status === "Done" ? "Undo" : "Mark done"}
+        </button>
+      ) : (
+        <button className="v3-link" onClick={() => ctx.go("client", t.tab)}>
+          Open
+        </button>
+      )}
     </div>
   );
 }
@@ -255,6 +267,23 @@ function PlanTab({ ctx }: { ctx: Ctx }) {
               </button>
             </div>
           ))}
+        </section>
+        <section className="v3-card">
+          <h3>Ready for setup</h3>
+          <p className="v3-muted">
+            Setup starts in the customer’s platform once these are clear.
+          </p>
+          <ul className="v3-gate">
+            {setupReadiness(state).map((c) => (
+              <li key={c.id} className={c.pass ? "pass" : "open"}>
+                <b>{c.pass ? "✓" : "○"}</b>
+                <span>
+                  {c.label}
+                  <small>{c.detail}</small>
+                </span>
+              </li>
+            ))}
+          </ul>
         </section>
         <section className="v3-card">
           <h3>Properties</h3>

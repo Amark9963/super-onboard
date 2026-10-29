@@ -4,16 +4,10 @@ import { useState } from "react";
 import {
   allSources,
   areas,
-  configurable,
   coverageOf,
-  isConfirmed,
-  markConfigured,
   reviewFact,
   routingTable,
-  shownLifecycle,
   shownValue,
-  testCases,
-  testStatus,
   waiveFact,
   type Fact,
   type PrototypeState,
@@ -24,28 +18,20 @@ function FactRow({
   state,
   f,
   onReview,
-  onConfigure,
   waive,
 }: {
   state: PrototypeState;
   f: Fact;
   onReview: () => void;
-  onConfigure: () => void;
   waive: (reason: string) => void;
 }) {
   const [reason, setReason] = useState("");
-  const life = f.waived ? "Waived" : shownLifecycle(state, f);
+  const life = f.waived ? "Waived" : f.lifecycle;
   const value = shownValue(f);
-  const mine = testCases(state).filter((t) => t.factId === f.id);
-  const passing = mine.filter((t) => testStatus(state, t) === "Pass").length;
   const canReview =
     f.value !== null &&
     f.approval === "Not reviewed" &&
     f.lifecycle !== "Needs clarification";
-  const canConfigure =
-    configurable(f) &&
-    f.lifecycle !== "Configured" &&
-    (!f.critical || isConfirmed(f));
   const canWaive = coverageOf(f) === "empty" && !f.critical;
   const source = f.sourceId
     ? allSources(state).find((s) => s.id === f.sourceId)?.title
@@ -93,22 +79,12 @@ function FactRow({
       <div className="state">
         <Tag kind={f.waived ? "gray" : undefined}>{life}</Tag>
         <Tag>{f.approval}</Tag>
-        {mine.length > 0 && (
-          <small className="v3-muted">
-            Tests {passing}/{mine.length}
-          </small>
-        )}
       </div>
-      {(canReview || canConfigure || canWaive) && (
+      {(canReview || canWaive) && (
         <div className="v3-actions wide">
           {canReview && (
             <button className="v3-btn secondary" onClick={onReview}>
               Mark reviewed
-            </button>
-          )}
-          {canConfigure && (
-            <button className="v3-btn secondary" onClick={onConfigure}>
-              Mark configured
             </button>
           )}
           {canWaive && (
@@ -195,7 +171,6 @@ export function RequirementsTab({ ctx }: { ctx: Ctx }) {
                 state={state}
                 f={f}
                 onReview={() => update((s) => reviewFact(s, f.id))}
-                onConfigure={() => update((s) => markConfigured(s, f.id))}
                 waive={(reason) => update((s) => waiveFact(s, f.id, reason))}
               />
             ))}

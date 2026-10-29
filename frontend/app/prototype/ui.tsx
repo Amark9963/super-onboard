@@ -18,9 +18,6 @@ export type Ctx = {
 const GREEN = [
   "Customer confirmed",
   "Customer approved",
-  "Configured",
-  "Tested",
-  "Pass",
   "Resolved",
   "Received",
   "Known",
@@ -229,8 +226,6 @@ export const tabLabels: Record<Tab, string> = {
   documents: "Documents",
   clarifications: "Clarifications",
   requirements: "Requirements",
-  agent: "Agent",
-  tests: "Tests",
   activity: "Activity",
 };
 export const tabOrder: Tab[] = [
@@ -238,7 +233,5 @@ export const tabOrder: Tab[] = [
   "documents",
   "clarifications",
   "requirements",
-  "agent",
-  "tests",
   "activity",
 ];

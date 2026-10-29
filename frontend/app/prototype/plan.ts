@@ -2,8 +2,6 @@
 // and a due date. Derived entirely from state, so it can never drift from the actual work.
 
 import {
-  agentPublished,
-  agentStatus,
   allSources,
   consistencyReport,
   contactByName,
@@ -11,10 +9,8 @@ import {
   documentRequests,
   factById,
   needsReview,
-  prereqItems,
-  sourceCatalog,
-  testCases,
-  testStatus,
+  setupItems,
+  setupUnlocked,
   topicsCovered,
   type PrototypeState,
 } from "./state.ts";
@@ -22,13 +18,7 @@ import { documentRows } from "./client.ts";
 
 export type TaskStatus = "Done" | "In progress" | "To do" | "Blocked";
 export type Tab =
-  | "plan"
-  | "documents"
-  | "clarifications"
-  | "requirements"
-  | "agent"
-  | "tests"
-  | "activity";
+  "plan" | "documents" | "clarifications" | "requirements" | "activity";
 export type Task = {
   id: string;
   phase: 1 | 2 | 3 | 4 | 5;
@@ -39,13 +29,15 @@ export type Task = {
   status: TaskStatus;
   due: string;
   tab: Tab;
+  /** Setup and go-live tasks are ticked off by hand in the Plan tab. */
+  manual?: { id: string; locked: boolean };
 };
 
 export const phaseNames = [
   "Kickoff and client details",
   "Collect information",
   "Clarify and confirm",
-  "Configure and test",
+  "Set up and test",
   "Go live and tune",
 ];
 
@@ -250,82 +242,25 @@ export function planTasks(state: PrototypeState): Task[] {
         tab: "clarifications",
       });
 
-  // Phase 4
-  const status4 = agentStatus(state);
-  for (const p of prereqItems)
+  // Phases 4 and 5: the work happens in the customer's agent platform. We only track it.
+  const dues: Record<string, string> = {
+    tests: "Nov 17",
+    gate: "Nov 19",
+    live: "Nov 20",
+    checkins: "From Nov 20",
+  };
+  for (const item of setupItems)
     add({
-      id: `p4-${p.id}`,
-      phase: 4,
-      title: p.label,
+      id: `p${item.phase}-${item.id}`,
+      phase: item.phase,
+      title: item.label,
       side: "team",
       assignee: owner,
-      status: state.prereqs[p.id] ? "Done" : "To do",
-      due: "Nov 12",
-      tab: "agent",
+      due: dues[item.id] ?? "Nov 12",
+      tab: "plan",
+      status: state.setup[item.id] ? "Done" : "To do",
+      manual: { id: item.id, locked: !setupUnlocked(state, item.phase) },
     });
-  add({
-    id: "p4-configure",
-    phase: 4,
-    title: `Configure the agent from confirmed details (${status4.configured} of ${status4.total})`,
-    side: "team",
-    assignee: owner,
-    status: status4.allConfigured
-      ? "Done"
-      : status4.configured
-        ? "In progress"
-        : "To do",
-    due: "Nov 13",
-    tab: "agent",
-  });
-  add({
-    id: "p4-publish",
-    phase: 4,
-    title: "Publish the agent version",
-    side: "team",
-    assignee: owner,
-    status: agentPublished(state) ? "Done" : "To do",
-    due: "Nov 13",
-    tab: "agent",
-  });
-  const cases = testCases(state);
-  const passing = cases.filter((t) => testStatus(state, t) === "Pass").length;
-  add({
-    id: "p4-tests",
-    phase: 4,
-    title: `Run the test scenarios (${passing} of ${cases.length} passing)`,
-    side: "team",
-    assignee: owner,
-    status:
-      cases.length > 0 && passing === cases.length
-        ? "Done"
-        : passing
-          ? "In progress"
-          : "To do",
-    due: "Nov 17",
-    tab: "tests",
-  });
-
-  // Phase 5
-  add({
-    id: "p5-gate",
-    phase: 5,
-    title: "Pass the launch gate",
-    side: "team",
-    assignee: owner,
-    status: "To do",
-    due: "Nov 19",
-    tab: "tests",
-  });
-  add({
-    id: "p5-checkins",
-    phase: 5,
-    title: "Hold weekly check-ins for the first four weeks",
-    side: "team",
-    assignee: owner,
-    status: "To do",
-    due: "From Nov 20",
-    tab: "activity",
-  });
   return tasks;
 }
 
@@ -355,6 +290,3 @@ export function phaseProgress(state: PrototypeState): PhaseProgress[] {
     };
   });
 }
-
-export const sourceTitle = (id: string) =>
-  sourceCatalog.find((s) => s.id === id)?.title ?? id;
