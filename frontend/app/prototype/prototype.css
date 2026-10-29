@@ -1595,3 +1595,121 @@
     flex-direction: column;
   }
 }
+
+/* Consistency, QA, progress tracker, process log */
+.v2-chip {
+  border: 1px solid #cfd8d2;
+  background: #fff;
+  border-radius: 20px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+.v2-chip.selected {
+  background: #1c4939;
+  color: #fff;
+}
+.v2-steps {
+  list-style: none;
+  margin: 12px 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.v2-steps li {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  opacity: 0.6;
+}
+.v2-steps li.done,
+.v2-steps li.current {
+  opacity: 1;
+}
+.v2-steps b {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: #e5ebe7;
+  font-size: 12px;
+}
+.v2-steps li.done b {
+  background: #28644a;
+  color: #fff;
+}
+.v2-steps li.current b {
+  background: #1c4939;
+  color: #fff;
+}
+.v2-steps small,
+.v2-checklist small,
+.v2-conflict blockquote small {
+  display: block;
+  color: #66736c;
+}
+.v2-conflict blockquote {
+  margin: 8px 0;
+  padding: 8px 12px;
+  border-left: 3px solid #d9a441;
+  background: #faf6ec;
+}
+.v2-fix label,
+.v2-recipient {
+  display: block;
+  margin: 8px 0;
+}
+.v2-recipient {
+  border-top: 1px solid #e3e8e5;
+  padding-top: 12px;
+}
+.v2-checklist {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.v2-checklist li {
+  display: flex;
+  gap: 10px;
+}
+.v2-checklist li.pass b {
+  color: #28644a;
+}
+.v2-testcase {
+  margin-top: 12px;
+}
+.v2-pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: #f4f6f4;
+  padding: 12px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+.v2-process {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.v2-process li {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 12px;
+  align-items: center;
+}
+.v2-process em {
+  font-style: normal;
+  font-size: 12px;
+  color: #8b5f19;
+}
+@media (max-width: 640px) {
+  .v2-process li {
+    grid-template-columns: 1fr auto;
+  }
+  .v2-process em {
+    grid-column: 1 / -1;
+  }
+}

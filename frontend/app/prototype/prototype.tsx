@@ -2,14 +2,33 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
+  AUTOMATION_THRESHOLD,
   categories,
+  claims,
+  consistencyReport,
+  currentStep,
   initialState,
+  isAutomationCandidate,
+  launchChecklist,
+  needsFromCustomer,
+  nextActions,
+  onboardingSteps,
   packageFiles,
+  processLog,
   readiness,
+  recipients,
+  recordTest,
+  resolveInternally,
   reviewAnswer,
+  runConsistencyCheck,
+  sendRequest,
+  sentQuestionIds,
   sources,
   submitAnswer,
+  testCases,
+  testStatus,
   updateQuestion,
+  weeklyCheckIn,
   zipFiles,
   type Category,
   type PrototypeState,
@@ -23,6 +42,8 @@ type View =
   | "clarifications"
   | "package"
   | "actions"
+  | "checks"
+  | "qa"
   | "portal";
 const views: View[] = [
   "projects",
@@ -32,13 +53,17 @@ const views: View[] = [
   "clarifications",
   "package",
   "actions",
+  "checks",
+  "qa",
   "portal",
 ];
 const nav: { view: View; label: string; icon: string }[] = [
   { view: "overview", label: "Overview", icon: "◫" },
   { view: "sources", label: "Sources", icon: "▤" },
   { view: "knowledge", label: "Knowledge", icon: "◇" },
+  { view: "checks", label: "Consistency", icon: "◈" },
   { view: "clarifications", label: "Clarifications", icon: "◎" },
+  { view: "qa", label: "QA & Launch", icon: "✓" },
   { view: "package", label: "Setup Package", icon: "▣" },
 ];
 const short = (value: string) => value.replace(" & ", " + ");
@@ -53,7 +78,12 @@ export default function Prototype() {
   const [selectedQuestions, setSelectedQuestions] = useState<string[]>([
     "q-emergency",
     "q-integration",
+    "q-pets",
   ]);
+  const [fixChoice, setFixChoice] = useState<Record<string, string>>({});
+  const [fixNote, setFixNote] = useState<Record<string, string>>({});
+  const [testNotes, setTestNotes] = useState<Record<string, string>>({});
+  const [checkIn, setCheckIn] = useState("");
   const [sourceChooser, setSourceChooser] = useState(false);
   const [sourceMethod, setSourceMethod] = useState("Upload files");
   const [sourceTitle, setSourceTitle] = useState("");
@@ -102,12 +132,29 @@ export default function Prototype() {
     state.knowledge[0];
   const activeSource =
     sources.find((s) => s.id === selectedSource) || sources[0];
+  const [portalRole, setPortalRole] = useState("Operations lead");
+  const sentIds = sentQuestionIds(state);
+  const anySent = sentIds.length > 0;
   const sentQuestions = state.questions.filter(
-    (q) => state.requestSent && state.sentQuestionIds?.includes(q.id),
+    (q) => q.recipientRole === portalRole && sentIds.includes(q.id),
   );
-  const responsesReceived = state.questions.filter(
-    (q) => q.revisions.length > q.reviewedRevision,
-  ).length;
+  const sentRoles = Object.keys(recipients).filter((r) =>
+    state.questions.some(
+      (q) => q.recipientRole === r && sentIds.includes(q.id),
+    ),
+  );
+  const report = consistencyReport(state);
+  const checklist = launchChecklist(state);
+  const cases = testCases(state);
+  const actions = nextActions(state);
+  const step = currentStep(state);
+  const steps = onboardingSteps(state);
+  const goTarget = (t: (typeof actions)[number]["target"]) => {
+    if (t.questionId) setSelectedQuestion(t.questionId);
+    if (t.sourceId) setSelectedSource(t.sourceId);
+    if (t.knowledgeId) return openKnowledge(t.knowledgeId);
+    go(t.view as View);
+  };
   const reviewedCount = state.knowledge.filter((k) =>
     ["Internally reviewed", "Customer confirmed"].includes(k.status),
   ).length;
@@ -196,7 +243,7 @@ export default function Prototype() {
           <button className="v2-link" onClick={() => go("clarifications")}>
             ← Return to specialist preview
           </button>
-          {!state.requestSent ? (
+          {!anySent ? (
             <div className="v2-empty">
               <h1>No review request in this demo yet.</h1>
               <p>
@@ -218,12 +265,59 @@ export default function Prototype() {
               </p>
               <div className="v2-portal-intro">
                 <span>
-                  <strong>{sentQuestions.length}</strong> questions in one
-                  request
+                  <strong>{sentQuestions.length}</strong> question
+                  {sentQuestions.length === 1 ? "" : "s"} in this request
                 </span>
-                <span>For Maya Chen · Operations lead</span>
+                <span>
+                  For {recipients[portalRole]?.name} · {portalRole}
+                </span>
                 <span>Demo link · no email sent</span>
               </div>
+              {sentRoles.length > 1 && (
+                <div className="v2-choices" aria-label="Preview as recipient">
+                  {sentRoles.map((r) => (
+                    <button
+                      key={r}
+                      className={`v2-chip ${portalRole === r ? "selected" : ""}`}
+                      onClick={() => setPortalRole(r)}
+                    >
+                      Preview as {recipients[r].name}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <section
+                className="v2-panel v2-tracker"
+                aria-label="Onboarding progress"
+              >
+                <p className="v2-eyebrow">
+                  STEP {step.n} OF {steps.length} · {step.name.toUpperCase()}
+                </p>
+                <ol className="v2-steps">
+                  {steps.map((s) => (
+                    <li key={s.n} className={s.status.toLowerCase()}>
+                      <b>{s.status === "Done" ? "✓" : s.n}</b>
+                      <span>
+                        {s.name}
+                        <small>{s.detail}</small>
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+                <strong>What we need from you to unblock</strong>
+                {needsFromCustomer(state, portalRole).length ? (
+                  <ul>
+                    {needsFromCustomer(state, portalRole).map((n) => (
+                      <li key={n}>{n}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="v2-muted">
+                    Nothing outstanding from you right now. We are reviewing
+                    your answers.
+                  </p>
+                )}
+              </section>
               {receipt && (
                 <div className="v2-success" role="status">
                   {receipt}
@@ -412,7 +506,7 @@ export default function Prototype() {
           className={`v2-side-link ${view === "actions" ? "active" : ""}`}
           onClick={() => go("actions")}
         >
-          <span>☷</span> My Actions <b>{responsesReceived + 2}</b>
+          <span>☷</span> My Actions <b>{actions.length}</b>
         </button>
         <div className="v2-side-section customer">OAKWOOD PROPERTY GROUP</div>
         {nav.map((item) => (
@@ -604,53 +698,24 @@ export default function Prototype() {
                       View all →
                     </button>
                   </div>
-                  {!status.ready && (
+                  {actions.slice(0, 4).map((a) => (
                     <Action
-                      icon="!"
-                      tone="red"
-                      title="Confirm weekend emergency route"
-                      subtitle="Conflicting SOP and call notes · Maple Grove"
-                      owner="Avery Morgan"
-                      due="Due today"
-                      button="Resolve"
-                      onClick={() => go("clarifications")}
+                      key={a.id}
+                      icon={a.icon}
+                      tone={a.tone}
+                      title={a.title}
+                      subtitle={a.subtitle}
+                      owner={a.owner}
+                      due={a.due}
+                      button={a.button}
+                      onClick={() => goTarget(a.target)}
                     />
+                  ))}
+                  {!actions.length && (
+                    <p className="v2-muted">
+                      Nothing needs a decision right now.
+                    </p>
                   )}
-                  {responsesReceived > 0 && (
-                    <Action
-                      icon="↺"
-                      tone="orange"
-                      title="Review updated customer answer"
-                      subtitle="The linked instruction requires a new specialist decision"
-                      owner="Avery Morgan"
-                      due="New reply"
-                      button="Review"
-                      onClick={() => go("clarifications")}
-                    />
-                  )}
-                  <Action
-                    icon="◇"
-                    tone="blue"
-                    title="Review pet-policy variation"
-                    subtitle="Separate property scopes · source evidence available"
-                    owner="Avery Morgan"
-                    due="Oct 31"
-                    button="Review"
-                    onClick={() => openKnowledge("pets")}
-                  />
-                  <Action
-                    icon="▤"
-                    tone="green"
-                    title="Request a readable move-in checklist"
-                    subtitle="Scanned PDF needs attention"
-                    owner="Avery Morgan"
-                    due="Nov 2"
-                    button="Open source"
-                    onClick={() => {
-                      setSelectedSource("scan");
-                      go("sources");
-                    }}
-                  />
                 </section>
                 <section className="v2-panel v2-readiness">
                   <p className="v2-eyebrow">CONFIGURATION PREPARATION</p>
@@ -660,15 +725,23 @@ export default function Prototype() {
                       : "Preparation incomplete"}
                   </h2>
                   <p>
-                    Known tasks completed{" "}
-                    <strong>{status.ready ? "75%" : "42%"}</strong>
+                    Step{" "}
+                    <strong>
+                      {step.n} of {steps.length}
+                    </strong>{" "}
+                    · {step.name}
                   </p>
                   <div className="v2-progress">
-                    <span style={{ width: status.ready ? "75%" : "42%" }} />
+                    <span
+                      style={{
+                        width: `${(steps.filter((s) => s.status === "Done").length / steps.length) * 100}%`,
+                      }}
+                    />
                   </div>
                   <small>
-                    This tracks known tasks, not onboarding completeness or
-                    launch readiness.
+                    {steps.filter((s) => s.status === "Done").length} of{" "}
+                    {steps.length} steps complete. This is a step count, not a
+                    forecast of launch readiness.
                   </small>
                   <div className="v2-divider" />
                   <strong>What is holding this up</strong>
@@ -784,51 +857,52 @@ export default function Prototype() {
                 </div>
               </div>
               <section className="v2-panel">
-                <Action
-                  icon="!"
-                  tone="red"
-                  title="Confirm weekend emergency route"
-                  subtitle="Critical information blocker · Maple Grove"
-                  owner="Avery Morgan"
-                  due="Due today"
-                  button="Open"
-                  onClick={() => go("clarifications")}
-                />
-                {responsesReceived > 0 && (
+                {actions.map((a) => (
                   <Action
-                    icon="↺"
-                    tone="orange"
-                    title="Review customer answer"
-                    subtitle="Response is evidence; specialist approval is still required"
-                    owner="Avery Morgan"
-                    due="New reply"
-                    button="Review"
-                    onClick={() => go("clarifications")}
+                    key={a.id}
+                    icon={a.icon}
+                    tone={a.tone}
+                    title={a.title}
+                    subtitle={a.subtitle}
+                    owner={a.owner}
+                    due={a.due}
+                    button={a.button}
+                    onClick={() => goTarget(a.target)}
                   />
+                ))}
+                {!actions.length && (
+                  <p className="v2-muted">
+                    Nothing needs a decision right now.
+                  </p>
                 )}
-                <Action
-                  icon="◇"
-                  tone="blue"
-                  title="Review pet-policy variation"
-                  subtitle="Source-backed candidate, not customer confirmed"
-                  owner="Avery Morgan"
-                  due="Oct 31"
-                  button="Review"
-                  onClick={() => openKnowledge("pets")}
-                />
-                <Action
-                  icon="▤"
-                  tone="green"
-                  title="Get readable move-in checklist"
-                  subtitle="Scanned PDF cannot be parsed in this prototype"
-                  owner="Avery Morgan"
-                  due="Nov 2"
-                  button="Open"
-                  onClick={() => {
-                    setSelectedSource("scan");
-                    go("sources");
-                  }}
-                />
+              </section>
+              <section className="v2-panel">
+                <div className="v2-section-head">
+                  <div>
+                    <p className="v2-eyebrow">PROCESS LOG</p>
+                    <h2>Repeated manual work</h2>
+                  </div>
+                </div>
+                <p className="v2-muted">
+                  Rule: once a step has been done by hand {AUTOMATION_THRESHOLD}{" "}
+                  times, it becomes an automation candidate. Counts are
+                  fictional demo data.
+                </p>
+                <ul className="v2-process">
+                  {processLog.map((p) => (
+                    <li key={p.id}>
+                      <span>{p.step}</span>
+                      <b>{p.count}×</b>
+                      <em>
+                        {p.automatedBy
+                          ? `Automated by: ${p.automatedBy}`
+                          : isAutomationCandidate(p.count)
+                            ? "Automation candidate"
+                            : "Watching"}
+                      </em>
+                    </li>
+                  ))}
+                </ul>
               </section>
             </>
           )}
@@ -1430,78 +1504,332 @@ export default function Prototype() {
                   <span className="v2-status blue">Simulated delivery</span>
                 </div>
                 <p>
-                  Select staff-approved questions for Maya Chen, Operations
-                  lead. The customer sees only selected wording and minimal
-                  context.
+                  Each recipient gets their own request with only their
+                  staff-approved questions and minimal context.
                 </p>
-                <div className="v2-group-list">
-                  {state.questions
-                    .filter((q) => q.recipientRole === "Operations lead")
-                    .map((q) => (
-                      <label key={q.id}>
-                        <input
-                          type="checkbox"
-                          checked={selectedQuestions.includes(q.id)}
-                          onChange={() => toggleSelected(q.id)}
-                        />{" "}
-                        <span>
-                          {q.title}
-                          <small>{q.status}</small>
-                        </span>
-                      </label>
-                    ))}
+                {Object.keys(recipients).map((role) => {
+                  const mine = state.questions.filter(
+                    (q) => q.recipientRole === role,
+                  );
+                  const approved = selectedQuestions.filter(
+                    (id) =>
+                      mine.some((q) => q.id === id) &&
+                      state.questions.find((q) => q.id === id)?.status ===
+                        "Ready to send",
+                  );
+                  const name = recipients[role].name;
+                  return (
+                    <div className="v2-recipient" key={role}>
+                      <strong>
+                        {name} · {role}
+                      </strong>
+                      <div className="v2-group-list">
+                        {mine.map((q) => (
+                          <label key={q.id}>
+                            <input
+                              type="checkbox"
+                              checked={selectedQuestions.includes(q.id)}
+                              onChange={() => toggleSelected(q.id)}
+                            />{" "}
+                            <span>
+                              {q.title}
+                              <small>{q.status}</small>
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                      <div className="v2-actions">
+                        <button
+                          className="v2-button"
+                          disabled={!approved.length}
+                          onClick={() => {
+                            setState((s) => sendRequest(s, role, approved));
+                            setPortalRole(role);
+                            flash(
+                              `Simulated request created for ${name}. No email, token, or backend link was generated. Open the local portal preview.`,
+                            );
+                          }}
+                        >
+                          Simulate sending request to {name}
+                        </button>
+                        {sentQuestionIds(state, role).length > 0 && (
+                          <button
+                            className="v2-link"
+                            onClick={() => {
+                              setPortalRole(role);
+                              go("portal");
+                            }}
+                          >
+                            Open local customer portal →
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </section>
+            </>
+          )}
+          {view === "checks" && (
+            <>
+              <div className="v2-page-head">
+                <div>
+                  <p className="v2-eyebrow">CONSISTENCY CHECK</p>
+                  <h1>Do the sources agree with each other?</h1>
+                  <p>
+                    Compares statements across customer sources and our own
+                    draft instructions. Conflicting instructions must be fixed
+                    before an agent sees them.
+                  </p>
                 </div>
-                <div className="v2-actions">
+                <button
+                  className="v2-button"
+                  onClick={() => {
+                    setState((s) => runConsistencyCheck(s));
+                    flash("Consistency check run on the current knowledge.");
+                  }}
+                >
+                  {report.ran ? "Run again" : "Run consistency check"}
+                </button>
+              </div>
+              {!report.ran ? (
+                <section className="v2-panel">
+                  <p>
+                    Not run yet. {claims.length} statements from{" "}
+                    {new Set(claims.map((c) => c.sourceId)).size} sources are
+                    waiting to be compared.
+                  </p>
+                </section>
+              ) : (
+                <>
+                  <p className="v2-muted">
+                    {report.claimsChecked} statements from{" "}
+                    {report.sourcesChecked} sources compared ·{" "}
+                    {report.conflicts.length} conflicts · {report.open.length}{" "}
+                    open · {report.variations.length} legitimate variation
+                    {report.variations.length === 1 ? "" : "s"}
+                  </p>
+                  {report.conflicts.map((c) => (
+                    <section className="v2-panel v2-conflict" key={c.id}>
+                      <div className="v2-section-head">
+                        <div>
+                          <p className="v2-eyebrow">
+                            {c.needs === "customer"
+                              ? "SOURCES DISAGREE"
+                              : "OUR OWN INSTRUCTIONS DISAGREE"}{" "}
+                            · {c.scope.toUpperCase()}
+                          </p>
+                          <h2>{c.topicLabel}</h2>
+                        </div>
+                        <span
+                          className={`v2-status ${c.resolved ? "green" : "amber"}`}
+                        >
+                          {c.resolved ? "Resolved" : "Open"}
+                        </span>
+                      </div>
+                      {c.claimIds.map((id) => {
+                        const claim = claims.find((x) => x.id === id)!;
+                        const src = sources.find(
+                          (x) => x.id === claim.sourceId,
+                        );
+                        return (
+                          <blockquote key={id}>
+                            “{claim.quote}”
+                            <small>
+                              {src?.title} · {claim.anchor}
+                            </small>
+                          </blockquote>
+                        );
+                      })}
+                      {c.resolved ? (
+                        <p>
+                          <strong>
+                            {c.resolution?.how === "internal fix"
+                              ? "Fixed in our draft"
+                              : "Customer answer approved"}
+                            :
+                          </strong>{" "}
+                          {c.resolution?.note}
+                        </p>
+                      ) : c.needs === "customer" ? (
+                        <button
+                          className="v2-button"
+                          onClick={() => {
+                            if (c.questionId) setSelectedQuestion(c.questionId);
+                            go("clarifications");
+                          }}
+                        >
+                          Ask the customer →
+                        </button>
+                      ) : (
+                        <div className="v2-fix">
+                          <p>Which instruction is intended?</p>
+                          {c.claimIds.map((id) => (
+                            <label key={id}>
+                              <input
+                                type="radio"
+                                name={`fix-${c.id}`}
+                                checked={fixChoice[c.id] === id}
+                                onChange={() =>
+                                  setFixChoice({ ...fixChoice, [c.id]: id })
+                                }
+                              />{" "}
+                              {claims.find((x) => x.id === id)?.value}
+                            </label>
+                          ))}
+                          <label className="v2-field">
+                            Reason, recorded with the fix
+                            <input
+                              value={fixNote[c.id] || ""}
+                              onChange={(e) =>
+                                setFixNote({
+                                  ...fixNote,
+                                  [c.id]: e.target.value,
+                                })
+                              }
+                            />
+                          </label>
+                          <button
+                            className="v2-button"
+                            disabled={
+                              !fixChoice[c.id] || !fixNote[c.id]?.trim()
+                            }
+                            onClick={() =>
+                              setState((s) =>
+                                resolveInternally(
+                                  s,
+                                  c.id,
+                                  fixChoice[c.id],
+                                  fixNote[c.id],
+                                ),
+                              )
+                            }
+                          >
+                            Record fix
+                          </button>
+                        </div>
+                      )}
+                    </section>
+                  ))}
+                  {report.variations.map((v) => (
+                    <section className="v2-panel" key={v.id}>
+                      <p className="v2-eyebrow">
+                        NOT A CONFLICT · DIFFERENT SCOPES
+                      </p>
+                      <h2>{v.topicLabel}</h2>
+                      {v.claimIds.map((id) => {
+                        const claim = claims.find((x) => x.id === id)!;
+                        return (
+                          <p key={id}>
+                            <strong>{claim.scope}:</strong> {claim.value}
+                          </p>
+                        );
+                      })}
+                    </section>
+                  ))}
+                </>
+              )}
+            </>
+          )}
+          {view === "qa" && (
+            <>
+              <div className="v2-page-head">
+                <div>
+                  <p className="v2-eyebrow">QA &amp; LAUNCH</p>
+                  <h1>Test cases and launch checklist</h1>
+                  <p>
+                    Test cases are generated from reviewed knowledge. This app
+                    does not run them: a specialist tries each scenario and
+                    records the result. Changing knowledge marks earlier results
+                    “Needs retest”.
+                  </p>
+                </div>
+              </div>
+              <section className="v2-panel">
+                <h2>Launch checklist</h2>
+                <ul className="v2-checklist">
+                  {checklist.map((c) => (
+                    <li key={c.id} className={c.pass ? "pass" : "open"}>
+                      <b>{c.pass ? "✓" : "○"}</b>
+                      <span>
+                        {c.label}
+                        <small>{c.detail}</small>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+              {cases.length === 0 && (
+                <section className="v2-panel">
+                  <p>No reviewed knowledge to test yet.</p>
+                </section>
+              )}
+              {cases.map((t) => {
+                const result = testStatus(state, t);
+                return (
+                  <section className="v2-panel v2-testcase" key={t.id}>
+                    <div className="v2-section-head">
+                      <div>
+                        <p className="v2-eyebrow">
+                          {t.kind.toUpperCase()}
+                          {t.critical ? " · CRITICAL" : ""} · {t.id}
+                        </p>
+                        <h2>{t.scenario}</h2>
+                      </div>
+                      <span
+                        className={`v2-status ${result === "Pass" ? "green" : result === "Not run" ? "blue" : "amber"}`}
+                      >
+                        {result}
+                      </span>
+                    </div>
+                    <p>
+                      <strong>Expected:</strong> {t.expected}
+                    </p>
+                    <label className="v2-field">
+                      Note
+                      <input
+                        value={testNotes[t.id] ?? state.tests[t.id]?.note ?? ""}
+                        onChange={(e) =>
+                          setTestNotes({ ...testNotes, [t.id]: e.target.value })
+                        }
+                      />
+                    </label>
+                    <div className="v2-actions">
+                      <button
+                        className="v2-button secondary"
+                        onClick={() =>
+                          setState((s) =>
+                            recordTest(s, t.id, "Pass", testNotes[t.id] ?? ""),
+                          )
+                        }
+                      >
+                        Record pass
+                      </button>
+                      <button
+                        className="v2-button secondary"
+                        onClick={() =>
+                          setState((s) =>
+                            recordTest(s, t.id, "Fail", testNotes[t.id] ?? ""),
+                          )
+                        }
+                      >
+                        Record fail
+                      </button>
+                    </div>
+                  </section>
+                );
+              })}
+              <section className="v2-panel">
+                <div className="v2-section-head">
+                  <h2>Weekly check-in draft</h2>
                   <button
                     className="v2-button secondary"
-                    onClick={() =>
-                      flash(
-                        `Preview: ${selectedQuestions.filter((id) => state.questions.find((q) => q.id === id)?.status === "Ready to send").length} staff-approved questions selected for Maya Chen. No email sent.`,
-                      )
-                    }
+                    onClick={() => setCheckIn(weeklyCheckIn(state))}
                   >
-                    Preview shared request
+                    Generate from current state
                   </button>
-                  <button
-                    className="v2-button"
-                    disabled={
-                      state.requestSent ||
-                      !selectedQuestions.some(
-                        (id) =>
-                          state.questions.find((q) => q.id === id)?.status ===
-                          "Ready to send",
-                      )
-                    }
-                    onClick={() => {
-                      const approved = selectedQuestions.filter(
-                        (id) =>
-                          state.questions.find((q) => q.id === id)?.status ===
-                          "Ready to send",
-                      );
-                      setSelectedQuestions(approved);
-                      setState((s) => ({
-                        ...s,
-                        requestSent: true,
-                        sentQuestionIds: approved,
-                        questions: s.questions.map((q) =>
-                          approved.includes(q.id)
-                            ? { ...q, status: "Sent" }
-                            : q,
-                        ),
-                      }));
-                      flash(
-                        "Simulated request created. No email, token, or backend link was generated. Open the local portal preview.",
-                      );
-                    }}
-                  >
-                    Simulate sending grouped request
-                  </button>
-                  {state.requestSent && (
-                    <button className="v2-link" onClick={() => go("portal")}>
-                      Open local customer portal →
-                    </button>
-                  )}
                 </div>
+                {checkIn && <pre className="v2-pre">{checkIn}</pre>}
               </section>
             </>
           )}
