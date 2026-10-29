@@ -1804,3 +1804,161 @@
     gap: 6px;
   }
 }
+
+/* try-it guide: a slim bar with the next step, and a list that opens on demand */
+.v3 .v3-guidebtn {
+  margin-left: auto;
+  margin-right: 12px;
+  background: var(--accent-soft);
+  color: #2f4fc0;
+  border: 1px solid #cdd8fb;
+  border-radius: 14px;
+  padding: 3px 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.v3 .v3-guidebtn b {
+  margin-left: 6px;
+  font-weight: 600;
+}
+.v3 .v3-guidebtn.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.v3 .v3-tryit {
+  position: fixed;
+  left: 248px;
+  right: 312px;
+  bottom: 14px;
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+.v3 .v3-tryit > * {
+  pointer-events: auto;
+}
+.v3 .v3-tryit .bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: #fff;
+  border: 1px solid #cdd8fb;
+  border-radius: 12px;
+  box-shadow: 0 6px 24px rgba(16, 24, 40, 0.14);
+  padding: 8px 12px;
+}
+.v3 .v3-tryit .count {
+  flex: none;
+  background: var(--accent-soft);
+  color: #2f4fc0;
+  border-radius: 10px;
+  padding: 1px 9px;
+  font-weight: 600;
+  font-size: 12px;
+}
+.v3 .v3-tryit .msg {
+  flex: 1;
+  min-width: 0;
+}
+.v3 .v3-tryit .msg small {
+  display: block;
+  color: var(--faint);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.v3 .v3-tryit .msg strong {
+  display: block;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.v3 .v3-tryit .close {
+  font-size: 18px;
+  color: var(--muted);
+  padding: 0 4px;
+}
+.v3 .v3-tryit .list {
+  align-self: flex-start;
+  width: min(440px, 100%);
+  max-height: 58vh;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 10px 34px rgba(16, 24, 40, 0.18);
+  padding: 14px 16px 8px;
+}
+.v3 .v3-tryit .list > header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+.v3 .v3-tryit h2 {
+  font-size: 15px;
+}
+.v3 .v3-tryit ol {
+  list-style: none;
+  margin: 8px 0 0;
+}
+.v3 .v3-tryit li {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  padding: 9px 0;
+  border-top: 1px solid var(--line);
+}
+.v3 .v3-tryit li b {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #eef0f3;
+  color: var(--muted);
+  font-size: 11px;
+}
+.v3 .v3-tryit li.done b {
+  background: #12b76a;
+  color: #fff;
+}
+.v3 .v3-tryit li.next b {
+  background: var(--accent);
+  color: #fff;
+}
+.v3 .v3-tryit li.done strong {
+  color: var(--muted);
+  font-weight: 500;
+}
+.v3 .v3-tryit li strong small {
+  color: var(--faint);
+  font-weight: 400;
+}
+.v3 .v3-tryit .hint {
+  display: block;
+  color: var(--muted);
+  margin-top: 2px;
+}
+@media (max-width: 960px) {
+  .v3 .v3-tryit {
+    left: 10px;
+    right: 10px;
+    bottom: 58px;
+  }
+  .v3 .v3-tryit .bar {
+    flex-wrap: wrap;
+  }
+  .v3 .v3-tryit .msg {
+    flex-basis: 60%;
+  }
+  .v3 .v3-guidebtn {
+    margin-right: 0;
+  }
+}

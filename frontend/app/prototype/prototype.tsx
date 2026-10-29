@@ -16,6 +16,8 @@ import { tabLabels, tabOrder, type Ctx, type View } from "./ui";
 import type { Tab } from "./plan";
 import Workspace from "./workspace";
 import { TeamPage } from "./team";
+import { TryIt } from "./tryit";
+import { tryItSteps } from "./demo";
 import { Clients, Inbox, Login, NewOnboarding, Portal } from "./pages";
 
 const simpleViews: View[] = [
@@ -48,6 +50,8 @@ export default function Prototype() {
   const [toast, setToast] = useState("");
   const [menu, setMenu] = useState(false);
   const [tray, setTray] = useState(false);
+  const [guide, setGuide] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
   const [resets, setResets] = useState(0);
 
   useEffect(() => {
@@ -86,6 +90,8 @@ export default function Prototype() {
       <Login
         onSignIn={() => {
           setSignedIn(true);
+          setGuide(true);
+          setGuideOpen(true);
           go("inbox");
         }}
       />
@@ -107,6 +113,9 @@ export default function Prototype() {
   const lateAdded = state.addedSources.includes(LATE_ID);
   const petsSent =
     state.questions.find((q) => q.id === "q-pets")?.status === "Sent";
+  const guideSteps = tryItSteps(state).filter((x) => !x.optional);
+  const guideDone = guideSteps.filter((x) => x.done).length;
+  const guideTotal = guideSteps.length;
   const teamOpen = assignments(state).filter((a) => a.side === "team").length;
 
   return (
@@ -194,6 +203,16 @@ export default function Prototype() {
             {view === "inbox" && <strong>Inbox</strong>}
             {view === "team" && <strong>Team</strong>}
           </div>
+          <button
+            className={`v3-guidebtn ${guide ? "on" : ""}`}
+            onClick={() => setGuide(!guide)}
+            aria-expanded={guide}
+          >
+            Try it{" "}
+            <b>
+              {guideDone}/{guideTotal}
+            </b>
+          </button>
           <span className="v3-sim">
             <i /> Simulated prototype · fictional data
           </span>
@@ -241,6 +260,18 @@ export default function Prototype() {
         </main>
       </div>
 
+      {guide && (
+        <TryIt
+          ctx={ctx}
+          expanded={guideOpen}
+          setExpanded={setGuideOpen}
+          onClose={() => {
+            setGuide(false);
+            setGuideOpen(false);
+          }}
+          openTray={() => setTray(true)}
+        />
+      )}
       <div className="v3-demo">
         {tray && (
           <div className="panel" role="region" aria-label="Demo controls">

@@ -45,6 +45,7 @@ import {
   currentStep as step,
 } from "../app/prototype/state.ts";
 import { diffActivity } from "../app/prototype/activity.ts";
+import { tryItSteps } from "../app/prototype/demo.ts";
 import { phaseProgress, planTasks } from "../app/prototype/plan.ts";
 
 const started = () => createClient(initialState, demoClient);
@@ -708,5 +709,92 @@ test("adding a customer contact later changes who a topic is assigned to, and is
         e.kind === "contact" &&
         e.text === "Added Priya Shah (Property manager) to the customer team",
     ),
+  );
+});
+
+const doneIds = (s) =>
+  tryItSteps(s)
+    .filter((x) => x.done)
+    .map((x) => x.id);
+
+test("the Try it guide ticks off by itself from what the viewer actually did", () => {
+  assert.deepEqual(doneIds(initialState), []);
+  assert.ok(tryItSteps(initialState).filter((x) => x.needsClient).length >= 8);
+  assert.deepEqual(doneIds(started()), ["create"]);
+  assert.deepEqual(doneIds(sendDocumentRequest(started())), [
+    "create",
+    "request",
+  ]);
+  const checked = runConsistencyCheck(
+    upload(
+      sendDocumentRequest(started()),
+      "transcript",
+      "sop",
+      "roster",
+      "faq",
+      "scan",
+    ),
+  );
+  assert.ok(
+    !doneIds(checked).includes("upload"),
+    "extraction has not been checked yet",
+  );
+  assert.ok(doneIds(checked).includes("detect"));
+  const done = clarified();
+  assert.deepEqual(doneIds(done), [
+    "create",
+    "request",
+    "upload",
+    "detect",
+    "send",
+    "answer",
+    "approve",
+  ]);
+  const withInvite = inviteMember(
+    done,
+    "new.person@example.invalid",
+    "QA reviewer",
+  );
+  assert.ok(doneIds(withInvite).includes("team"));
+  assert.equal(
+    tryItSteps(withInvite).find((x) => x.id === "team").optional,
+    true,
+  );
+});
+
+test("the late-email step needs the new document checked and the check re-run", () => {
+  let s = addSource(clarified());
+  assert.ok(!doneIds(s).includes("late"), "stale and unchecked");
+  s = reviewSource(s, "email-maya");
+  assert.ok(!doneIds(s).includes("late"), "still stale");
+  s = runConsistencyCheck(s);
+  assert.ok(doneIds(s).includes("late"));
+  assert.ok(
+    !doneIds(s).includes("approve"),
+    "the new pet-policy conflict reopens clarification",
+  );
+});
+
+test("every step of the guide finishes when the onboarding is complete", () => {
+  let s = clarified();
+  for (const i of setupItems.filter((x) => x.phase === 4))
+    s = toggleSetup(s, i.id);
+  for (const i of setupItems.filter((x) => x.phase === 5))
+    s = toggleSetup(s, i.id);
+  const required = tryItSteps(s).filter((x) => !x.optional);
+  assert.deepEqual(
+    required.filter((x) => !x.done).map((x) => x.id),
+    ["late"],
+    "only the optional-in-practice late email remains",
+  );
+  s = runConsistencyCheck(reviewSource(addSource(s), "email-maya"));
+  s = approveAndSend(s);
+  s = answer(s, "q-pets", "Two cats at both properties");
+  for (const i of setupItems) if (!s.setup[i.id]) s = toggleSetup(s, i.id);
+  assert.equal(
+    tryItSteps(s)
+      .filter((x) => !x.optional)
+      .every((x) => x.done),
+    true,
   );
 });
