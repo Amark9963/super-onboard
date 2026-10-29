@@ -1,131 +1,92 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  addSource,
+  applyDefault,
   consistencyReport,
+  coverage,
+  currentStep,
+  exportCsv,
   initialState,
   launchChecklist,
+  markConfigured,
   nextActions,
   onboardingSteps,
-  packageFiles,
+  processCounts,
   readiness,
   recordTest,
+  reopenQuestion,
   resolveInternally,
   reviewAnswer,
+  reviewFact,
   runConsistencyCheck,
   sendRequest,
   submitAnswer,
   testCases,
   testStatus,
   updateQuestion,
+  waiveFact,
   weeklyCheckIn,
-  zipFiles,
+  convertIssue,
 } from "../app/prototype/state.ts";
 
-function sentState() {
-  let s = initialState;
-  for (const id of ["q-emergency", "q-integration", "q-pets"])
-    s = updateQuestion(s, id, { status: "Ready to send" });
-  s = sendRequest(s, "Operations lead", ["q-emergency", "q-integration"]);
+const approveAll = (s) => {
+  for (const q of s.questions)
+    s = updateQuestion(s, q.id, { status: "Ready to send" });
   return s;
-}
+};
+const sendAll = (s) => {
+  s = approveAll(s);
+  s = sendRequest(s, "Operations lead", ["q-emergency", "q-integration"]);
+  return sendRequest(s, "Property manager", ["q-pets"]);
+};
+const answer = (s, id, text) =>
+  reviewAnswer(submitAnswer(s, id, text, "answer"), id);
 
-function allResolved() {
-  let s = runConsistencyCheck(sentState());
-  s = reviewAnswer(
-    submitAnswer(
-      s,
-      "q-emergency",
-      "On-call supervisor, then front desk",
-      "answer",
-    ),
-    "q-emergency",
-  );
-  s = reviewAnswer(
-    submitAnswer(
-      s,
-      "q-integration",
-      "Maya authorizes read-only lookups",
-      "answer",
-    ),
-    "q-integration",
-  );
-  return resolveInternally(
+/** Everything resolved except testing. */
+function prepared() {
+  let s = runConsistencyCheck(sendAll(initialState));
+  s = resolveInternally(
     s,
     "emergency-transfer",
     "c-draft-transfer",
     "Customer wants a transfer when possible",
   );
+  s = answer(s, "q-emergency", "On-call supervisor first");
+  s = answer(s, "q-integration", "Maya authorizes read-only lookups");
+  s = answer(
+    s,
+    "q-pets",
+    "Per property: two cats at Maple Grove, one cat at Willow Court",
+  );
+  s = waiveFact(s, "G2", "x"); // G2 is not critical
+  s = waiveFact(s, "F4", "Customer will supply a text copy later");
+  s = waiveFact(s, "S3", "Not in scope for launch");
+  for (const f of s.facts) s = reviewFact(s, f.id);
+  return s;
 }
 
-test("customer answer is evidence until staff approval; amendment reopens knowledge", () => {
-  const sent = runConsistencyCheck(sentState());
-  const first = submitAnswer(
-    sent,
-    "q-emergency",
-    "On-call supervisor first",
-    "answer",
+test("the spec starts at 13 known, 3 awaiting clarification, 4 empty, 3 confirmed", () => {
+  const c = coverage(initialState);
+  assert.deepEqual(
+    [c.total, c.known, c.clarifying, c.empty, c.confirmed],
+    [20, 13, 3, 4, 3],
   );
-  assert.equal(
-    first.knowledge.find((k) => k.id === "emergency").status,
-    "Needs clarification",
-  );
-  assert.equal(readiness(first).ready, false);
-  const done = allResolved();
-  assert.equal(readiness(done).ready, true);
-  assert.match(
-    packageFiles(done)["03-team-and-routing.md"],
-    /On-call supervisor/i,
-  );
-  const exported = { ...done, packageSnapshot: done.knowledgeRevision };
-  assert.equal(readiness(exported).stale, false);
-  const amended = submitAnswer(
-    exported,
-    "q-emergency",
-    "Front desk first",
-    "answer",
-  );
-  assert.equal(readiness(amended).ready, false);
-  assert.equal(readiness(amended).stale, true);
 });
 
-test("reviewing an answer keeps each linked item's own summary", () => {
-  const s = reviewAnswer(
-    submitAnswer(sentState(), "q-emergency", "On-call supervisor", "answer"),
-    "q-emergency",
+test("steps are derived: step 3 is current and has real checklist pieces", () => {
+  const steps = onboardingSteps(initialState);
+  assert.equal(currentStep(initialState).n, 3);
+  assert.deepEqual(
+    steps.map((x) => x.status),
+    ["Done", "Done", "Current", "Upcoming", "Upcoming"],
   );
-  const scenario = s.knowledge.find((k) => k.id === "scenario");
-  const emergency = s.knowledge.find((k) => k.id === "emergency");
-  assert.notEqual(scenario.summary, emergency.summary);
-  assert.match(scenario.summary, /Collect location/);
-  assert.equal(scenario.customerAnswer.value, "On-call supervisor");
+  assert.equal(steps[2].pieces.length, 4);
+  assert.equal(steps[2].pieces.filter((p) => p.done).length, 0);
+  assert.equal(nextActions(initialState)[0].id, "run-check");
 });
 
-test("unknown or delegated answers never confirm; unsent questions reject submissions", () => {
-  assert.equal(
-    submitAnswer(initialState, "q-emergency", "x", "answer"),
-    initialState,
-  );
-  const sent = sentState();
-  const unknown = submitAnswer(sent, "q-emergency", "", "unknown");
-  assert.equal(reviewAnswer(unknown, "q-emergency"), unknown);
-  // q-pets was never sent, so it cannot receive an answer.
-  assert.equal(submitAnswer(sent, "q-pets", "x", "answer"), sent);
-});
-
-test("requests are per recipient and only carry approved questions", () => {
-  const s = sentState();
-  assert.equal(s.requests.length, 1);
-  assert.equal(s.requests[0].recipientName, "Maya Chen");
-  assert.equal(
-    sendRequest(s, "Operations lead", ["q-pets"]),
-    s,
-    "wrong recipient",
-  );
-  const both = sendRequest(s, "Property manager", ["q-pets"]);
-  assert.equal(both.requests.length, 2);
-});
-
-test("consistency check finds source and draft conflicts but not scope variations", () => {
+test("consistency check finds source and draft conflicts, not scope variations", () => {
   const r = consistencyReport(runConsistencyCheck(initialState));
   assert.deepEqual(r.conflicts.map((c) => c.id).sort(), [
     "emergency-transfer",
@@ -135,111 +96,214 @@ test("consistency check finds source and draft conflicts but not scope variation
     r.conflicts.find((c) => c.id === "emergency-transfer").needs,
     "internal",
   );
-  assert.equal(
-    r.conflicts.find((c) => c.id === "weekend-flood-route").needs,
-    "customer",
-  );
   assert.deepEqual(
     r.variations.map((v) => v.id),
     ["pet-limit"],
   );
-  assert.equal(readiness(initialState).ready, false);
   assert.ok(readiness(initialState).blockers[0].includes("consistency check"));
 });
 
-test("internal conflicts need a stated reason and a real choice", () => {
-  const s = runConsistencyCheck(initialState);
-  assert.equal(
-    resolveInternally(s, "emergency-transfer", "c-draft-transfer", " "),
-    s,
-  );
-  assert.equal(resolveInternally(s, "emergency-transfer", "c-pets-mg", "x"), s);
-  assert.equal(
-    resolveInternally(s, "weekend-flood-route", "c-sop-route", "x"),
-    s,
-    "customer conflicts are not self-fixable",
-  );
-  const fixed = resolveInternally(
-    s,
+test("a late source fills gaps, makes the check stale and turns pets into a real conflict", () => {
+  const checked = runConsistencyCheck(initialState);
+  assert.equal(consistencyReport(checked).stale, false);
+  const late = addSource(checked);
+  assert.equal(addSource(late), late, "adding twice is a no-op");
+  const g2 = late.facts.find((f) => f.id === "G2");
+  assert.match(g2.value, /90%/);
+  assert.equal(g2.lifecycle, "Extracted");
+  assert.equal(coverage(late).empty, 2);
+  assert.equal(consistencyReport(late).stale, true);
+  assert.ok(readiness(late).blockers.some((b) => b.includes("run it again")));
+  const rerun = consistencyReport(runConsistencyCheck(late));
+  assert.equal(rerun.stale, false);
+  assert.deepEqual(rerun.conflicts.map((c) => c.id).sort(), [
     "emergency-transfer",
-    "c-draft-weekend",
-    "Callback is the intended rule",
-  );
-  assert.equal(consistencyReport(fixed).open.length, 1);
+    "pet-limit",
+    "weekend-flood-route",
+  ]);
+  assert.equal(rerun.variations.length, 0);
 });
 
-test("test results go stale when the knowledge they cover changes", () => {
-  const s = allResolved();
-  const tc = testCases(s).find(
-    (t) => t.knowledgeId === "emergency" && t.kind === "Emergency",
+test("an earlier pets answer does not hide the conflict a later source creates", () => {
+  let s = sendAll(initialState);
+  s = answer(
+    s,
+    "q-pets",
+    "Per property: two cats at Maple Grove, one cat at Willow Court",
   );
-  assert.ok(tc && tc.critical);
-  assert.equal(testStatus(s, tc), "Not run");
-  const passed = recordTest(s, tc.id, "Pass", "tried it");
-  assert.equal(testStatus(passed, tc), "Pass");
-  const changed = submitAnswer(
-    passed,
+  s = runConsistencyCheck(addSource(s));
+  const pets = consistencyReport(s).conflicts.find((c) => c.id === "pet-limit");
+  assert.equal(pets.resolved, false);
+  s = reopenQuestion(s, "q-pets");
+  assert.equal(
+    s.questions.find((q) => q.id === "q-pets").status,
+    "Ready to send",
+  );
+  s = sendRequest(s, "Property manager", ["q-pets"]);
+  s = answer(s, "q-pets", "Two cats at both properties");
+  assert.equal(
+    consistencyReport(s).conflicts.find((c) => c.id === "pet-limit").resolved,
+    true,
+  );
+});
+
+test("customer answers are evidence until approved, and never overwrite other items", () => {
+  const sent = sendAll(initialState);
+  const first = submitAnswer(
+    sent,
     "q-emergency",
-    "Front desk first",
+    "On-call supervisor",
     "answer",
   );
-  const again = reviewAnswer(changed, "q-emergency");
-  assert.equal(testStatus(again, tc), "Needs retest");
   assert.equal(
-    launchChecklist(again).find((c) => c.id === "no-retest").pass,
+    first.facts.find((f) => f.id === "T2").lifecycle,
+    "Needs clarification",
+  );
+  const approved = reviewAnswer(first, "q-emergency");
+  const t2 = approved.facts.find((f) => f.id === "T2");
+  const s1 = approved.facts.find((f) => f.id === "S1");
+  assert.equal(t2.approval, "Customer approved");
+  assert.notEqual(t2.value, s1.value);
+  assert.match(s1.value, /Collect property and unit/);
+  assert.equal(s1.customerAnswer.value, "On-call supervisor");
+  // an empty fact takes the customer's answer as its value
+  const i2 = answer(sent, "q-integration", "Maya authorizes").facts.find(
+    (f) => f.id === "I2",
+  );
+  assert.equal(i2.value, "Maya authorizes");
+});
+
+test("unknown or delegated answers never confirm; unsent questions reject submissions", () => {
+  assert.equal(
+    submitAnswer(initialState, "q-emergency", "x", "answer"),
+    initialState,
+  );
+  const unknown = submitAnswer(
+    sendAll(initialState),
+    "q-emergency",
+    "",
+    "unknown",
+  );
+  assert.equal(reviewAnswer(unknown, "q-emergency"), unknown);
+  assert.equal(readiness(unknown).ready, false);
+});
+
+test("requests are per recipient and only carry approved questions", () => {
+  const s = approveAll(initialState);
+  assert.equal(
+    sendRequest(s, "Operations lead", ["q-pets"]),
+    s,
+    "wrong recipient",
+  );
+  const sent = sendRequest(s, "Operations lead", [
+    "q-emergency",
+    "q-integration",
+  ]);
+  assert.equal(sent.requests[0].recipientName, "Maya Chen");
+  assert.equal(
+    sendRequest(sent, "Operations lead", ["q-emergency"]),
+    sent,
+    "already sent",
+  );
+});
+
+test("defaults apply only to non-critical questions that were sent and unanswered", () => {
+  const sent = sendAll(initialState);
+  assert.equal(
+    applyDefault(sent, "q-emergency"),
+    sent,
+    "critical never defaults",
+  );
+  assert.equal(applyDefault(initialState, "q-pets"), initialState, "not sent");
+  const d = applyDefault(sent, "q-pets");
+  assert.equal(d.questions.find((q) => q.id === "q-pets").status, "Defaulted");
+  assert.match(
+    d.facts.find((f) => f.id === "F3").note,
+    /not confirmed by the customer/,
+  );
+  assert.ok(readiness(d).risks.some((r) => r.includes("default")));
+});
+
+test("gaps can be waived with a reason, but critical gaps cannot", () => {
+  assert.equal(waiveFact(initialState, "F4", " "), initialState);
+  assert.equal(waiveFact(initialState, "I2", "skip"), initialState, "critical");
+  assert.ok(
+    waiveFact(initialState, "F4", "later").facts.find((f) => f.id === "F4")
+      .waived,
+  );
+});
+
+test("test cases come only from reviewed facts, and results go stale when a fact changes", () => {
+  assert.equal(
+    testCases(initialState).every(
+      (t) => !["G3", "F2", "S2", "I4"].includes(t.factId),
+    ),
+    true,
+  );
+  let s = prepared();
+  assert.equal(readiness(s).ready, true);
+  const tc = testCases(s).find(
+    (t) => t.factId === "T2" && t.kind === "Emergency",
+  );
+  assert.ok(tc && tc.critical);
+  s = recordTest(s, tc.id, "Pass", "tried it");
+  assert.equal(testStatus(s, tc), "Pass");
+  s = answer(s, "q-emergency", "Front desk first");
+  assert.equal(testStatus(s, tc), "Needs retest");
+  assert.equal(
+    launchChecklist(s).find((c) => c.id === "no-retest").pass,
     false,
   );
 });
 
-test("launch checklist is never complete before every case passes", () => {
-  let s = allResolved();
+test("launch checklist and steps reach the end only when everything is done and passing", () => {
+  let s = prepared();
   assert.equal(
     launchChecklist(s).every((c) => c.pass),
     false,
   );
-  // Pets stay unreviewed until its question is sent, answered and approved.
-  s = sendRequest(s, "Property manager", ["q-pets"]);
-  s = reviewAnswer(
-    submitAnswer(s, "q-pets", "Yes, one cat with written approval", "answer"),
-    "q-pets",
-  );
-  assert.equal(launchChecklist(s).find((c) => c.id === "questions").pass, true);
+  for (const f of s.facts) s = markConfigured(s, f.id);
+  assert.equal(currentStep(s).n, 4);
   for (const t of testCases(s)) s = recordTest(s, t.id, "Pass");
   assert.equal(
     launchChecklist(s).every((c) => c.pass),
     true,
   );
+  assert.equal(currentStep(s).n, 5);
+  assert.equal(s.facts.find((f) => f.id === "T3").lifecycle, "Configured");
 });
 
-test("progress and actions are derived, not hard-coded", () => {
+test("the process log counts real manual actions and flags three-times candidates", () => {
+  const before = processCounts(initialState).find((p) => p.id === "configure");
   assert.equal(
-    onboardingSteps(initialState).find((x) => x.status === "Current").n,
-    3,
-  );
-  assert.equal(nextActions(initialState)[0].id, "run-check");
-  const done = allResolved();
-  assert.equal(
-    nextActions(done).some((a) => a.id.startsWith("conflict-")),
+    before.candidate,
     false,
+    "2 earlier onboardings is below the threshold",
   );
-  assert.equal(onboardingSteps(done).find((x) => x.status === "Current").n, 4);
-  assert.match(weeklyCheckIn(initialState), /step 3 of 5/);
+  let s = prepared();
+  s = markConfigured(s, "T3");
+  const configure = processCounts(s).find((p) => p.id === "configure");
+  assert.equal(configure.live, 1);
+  assert.equal(configure.candidate, true, "2 earlier + 1 now = 3");
+  assert.equal(
+    processCounts(s).find((p) => p.id === "compare").candidate,
+    false,
+    "already automated",
+  );
 });
 
-test("package content and ZIP bytes are deterministic for identical state", () => {
-  const files = packageFiles(initialState);
-  assert.equal(Object.keys(files).length, 9);
-  assert.doesNotMatch(files["03-team-and-routing.md"], /front desk first/i);
-  assert.deepEqual(files, packageFiles(initialState));
-  const first = zipFiles(files);
-  assert.deepEqual(first, zipFiles(packageFiles(initialState)));
-  assert.equal(new DataView(first.buffer).getUint32(0, true), 0x04034b50);
+test("post-launch issues become test cases once", () => {
+  const once = convertIssue(initialState, "i1");
   assert.equal(
-    new DataView(first.buffer).getUint32(first.length - 22, true),
-    0x06054b50,
+    testCases(once).some((t) => t.id === "T-i1"),
+    true,
   );
-  assert.equal(
-    new DataView(first.buffer).getUint16(first.length - 12, true),
-    9,
-  );
+  assert.equal(convertIssue(once, "i1"), once);
+});
+
+test("outputs: check-in, CSV rows and Slack text are derived from state", () => {
+  assert.match(weeklyCheckIn(initialState), /step 3 of 5/);
+  const csv = exportCsv(initialState).trim().split("\n");
+  assert.equal(csv.length, 21);
+  assert.match(csv[0], /^fact_id,area,fact,value,status,approval,owner/);
 });

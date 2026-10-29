@@ -1,34 +1,36 @@
-// Pure, deterministic state for the v2 onboarding-preparation prototype. No network, no backend:
-// everything here is simulated fictional data (Oakwood Property Group). Keep this file free of
+// Pure, deterministic state for the onboarding-process prototype. No network, no backend:
+// everything here is simulated, fictional data (Oakwood Property Group). Keep this file free of
 // TypeScript-only runtime syntax (enums, namespaces) so Node can run it directly in tests.
+//
+// The central object is the intake spec: 20 required facts across five areas. Each fact has a
+// source, an owner, a lifecycle status and a separate approval state.
 
-export type Category =
-  | "Goals"
-  | "Team & Routing"
-  | "FAQs & Policies"
-  | "Handling Scenarios"
-  | "Integrations";
-export type KnowledgeStatus =
-  | "AI draft"
-  | "Needs review"
+export type Area =
+  "Goals" | "Team & rules" | "FAQs" | "Scenarios" | "Integrations";
+export type Lifecycle =
+  | "Not received"
+  | "Received"
+  | "Extracted"
   | "Needs clarification"
-  | "Internally reviewed"
-  | "Customer confirmed";
+  | "Customer confirmed"
+  | "Configured"
+  | "Tested";
+export type Approval =
+  "Not reviewed" | "Specialist reviewed" | "Customer approved";
+
 export type Source = {
   id: string;
   title: string;
   type: string;
   received: string;
-  scope: string;
   suppliedBy: string;
-  parse: string;
-  extraction: string;
-  review: string;
-  icon: string;
-  excerpt: string;
+  parse: "Parsed" | "Needs attention";
+  flagged?: boolean;
   anchor: string;
+  excerpt: string;
   note?: string;
 };
+
 /** A statement a source makes about how something should work. The consistency check compares them. */
 export type Claim = {
   id: string;
@@ -39,67 +41,73 @@ export type Claim = {
   scope: string;
   value: string;
   quote: string;
+  factIds: string[];
 };
-export type Knowledge = {
+
+export type Fact = {
   id: string;
-  category: Category;
-  title: string;
-  summary: string;
-  scope: string;
-  assignee: string;
-  status: KnowledgeStatus;
-  evidence: string;
+  area: Area;
+  label: string;
+  value: string | null;
+  sourceId: string | null;
   anchor: string;
-  sourceId: string;
+  evidence: string;
+  owner: string;
+  lifecycle: Lifecycle;
+  approval: Approval;
   critical?: boolean;
-  detail: string;
-  links?: string[];
-  claimIds?: string[];
-  /** Bumps whenever the meaning or status changes, so earlier test results can be flagged stale. */
+  note?: string;
+  waived?: { reason: string; owner: string };
+  /** Bumps when the meaning changes, so earlier test results can be flagged stale. */
   rev: number;
-  /** The customer's reviewed wording. Kept apart from `summary`, which stays source-based. */
+  /** The customer's reviewed wording, kept beside the source-based value. */
   customerAnswer?: { questionId: string; value: string; revision: number };
 };
+
 export type AnswerRevision = {
   value: string;
   kind: "answer" | "unknown" | "delegate";
   at: string;
   comment: string;
 };
+export type QuestionStatus =
+  | "AI draft"
+  | "Ready to send"
+  | "Sent"
+  | "Response received"
+  | "Resolved"
+  | "Defaulted";
 export type Question = {
   id: string;
   title: string;
   text: string;
-  proposed: string;
   why: string;
   source: string;
   recipientRole: string;
-  status:
-    | "AI draft"
-    | "Ready to send"
-    | "Sent"
-    | "Response received"
-    | "In review"
-    | "Resolved";
-  knowledgeIds: string[];
+  status: QuestionStatus;
+  factIds: string[];
+  options: string[];
+  defaultIfNoReply?: string;
   revisions: AnswerRevision[];
   reviewedRevision: number;
   conflictId?: string;
 };
+
 export type Conflict = {
   id: string;
   topicLabel: string;
   scope: string;
   claimIds: string[];
   needs: "customer" | "internal";
-  knowledgeIds: string[];
+  factIds: string[];
   questionId?: string;
 };
 export type Variation = { id: string; topicLabel: string; claimIds: string[] };
 export type Resolution = {
   conflictId: string;
-  how: "customer answer" | "internal fix";
+  how: "customer answer" | "internal fix" | "default";
   note: string;
+  claimSig: string;
   chosenClaimId?: string;
 };
 export type SentRequest = {
@@ -108,30 +116,54 @@ export type SentRequest = {
   recipientName: string;
   questionIds: string[];
 };
-export type TestResult = "Pass" | "Fail";
-export type TestRecord = {
-  result: TestResult;
-  note: string;
-  knowledgeRev: number;
+
+export type TestKind =
+  | "Normal"
+  | "Negative"
+  | "Boundary"
+  | "After-hours"
+  | "Transfer"
+  | "Emergency"
+  | "Unsupported question"
+  | "Integration failure"
+  | "From issue";
+export type TestCase = {
+  id: string;
+  factId: string;
+  kind: TestKind;
+  scenario: string;
+  expected: string;
+  critical: boolean;
 };
-export type PrototypeState = {
-  questions: Question[];
-  knowledge: Knowledge[];
-  packageSnapshot: number;
-  knowledgeRevision: number;
-  requests: SentRequest[];
-  sourceRun: string[];
-  resolutions: Record<string, Resolution>;
-  tests: Record<string, TestRecord>;
-  /** knowledgeRevision at the last consistency check; 0 means it has never been run. */
-  consistencyRunAt: number;
+export type TestResult = "Pass" | "Fail";
+export type TestRecord = { result: TestResult; note: string; factRev: number };
+export type Issue = {
+  id: string;
+  text: string;
+  factId: string;
+  expected: string;
 };
 
-export const categories: Category[] = [
+export type PrototypeState = {
+  facts: Fact[];
+  questions: Question[];
+  requests: SentRequest[];
+  resolutions: Record<string, Resolution>;
+  tests: Record<string, TestRecord>;
+  extraTests: TestCase[];
+  addedSources: string[];
+  /** Bumps whenever a new source arrives; a check run before that is stale. */
+  sourceRevision: number;
+  /** sourceRevision at the last consistency check; null means it has never been run. */
+  consistencyRun: number | null;
+  manualLog: Record<string, number>;
+};
+
+export const areas: Area[] = [
   "Goals",
-  "Team & Routing",
-  "FAQs & Policies",
-  "Handling Scenarios",
+  "Team & rules",
+  "FAQs",
+  "Scenarios",
   "Integrations",
 ];
 
@@ -140,34 +172,31 @@ export const recipients: Record<string, { name: string }> = {
   "Property manager": { name: "Priya Shah" },
 };
 
-export const sources: Source[] = [
+export const OWNER = "Avery Morgan";
+
+// ---------------------------------------------------------------------------------------------
+// Sources and claims
+// ---------------------------------------------------------------------------------------------
+
+export const baseSources: Source[] = [
   {
     id: "sop",
     title: "Oakwood operations handbook",
     type: "PDF · 24 pages",
     received: "Oct 22, 2026",
-    scope: "Company-wide",
     suppliedBy: "Maya Chen",
     parse: "Parsed",
-    extraction: "3 candidates",
-    review: "Partial review",
-    icon: "PDF",
-    anchor: "p. 12 · Emergency calls",
+    anchor: "p. 7 · Pets / p. 12 · Emergency calls",
     excerpt:
       "For after-hours emergencies, transfer the caller to the on-call maintenance supervisor. If unavailable, take a callback number and alert the property manager.",
-    note: "A later call transcript gives a different weekend instruction.",
   },
   {
     id: "transcript",
     title: "Implementation kickoff call",
     type: "Transcript · TXT",
     received: "Oct 24, 2026",
-    scope: "Maple Grove",
     suppliedBy: "Maya Chen",
     parse: "Parsed",
-    extraction: "2 candidates",
-    review: "Needs review",
-    icon: "TXT",
     anchor: "18:42 · Maya Chen",
     excerpt:
       "On weekends at Maple Grove, the front desk usually handles urgent calls first. I need to check whether that still applies to flooding emergencies.",
@@ -177,12 +206,8 @@ export const sources: Source[] = [
     title: "Team & escalation contacts",
     type: "Spreadsheet · XLSX",
     received: "Oct 23, 2026",
-    scope: "Two properties",
     suppliedBy: "Jordan Lee",
     parse: "Parsed",
-    extraction: "3 candidates",
-    review: "Partial review",
-    icon: "XLS",
     anchor: "Escalation sheet · B4–F8",
     excerpt:
       "Maintenance supervisor: on-call role. Property manager: fallback role. Weekend schedule: maintained in the external scheduling system; do not copy a static roster.",
@@ -192,13 +217,9 @@ export const sources: Source[] = [
     title: "Resident FAQ snapshot",
     type: "Website · HTML",
     received: "Oct 25, 2026",
-    scope: "Company-wide",
     suppliedBy: "Public oakwood.example",
     parse: "Parsed",
-    extraction: "2 candidates",
-    review: "Reviewed",
-    icon: "WEB",
-    anchor: "FAQ / office-hours · fetched Oct 25",
+    anchor: "FAQ / office-hours",
     excerpt:
       "The leasing desk is open Monday through Friday, 9 a.m.–5 p.m. Messages received outside these hours are returned the next business day.",
   },
@@ -207,64 +228,39 @@ export const sources: Source[] = [
     title: "Draft agent instructions v0.3",
     type: "Internal draft · Markdown",
     received: "Oct 28, 2026",
-    scope: "Company-wide",
     suppliedBy: "Avery Morgan",
     parse: "Parsed",
-    extraction: "2 candidates",
-    review: "Needs review",
-    icon: "TXT",
-    anchor: "Section 3 · Transfers / Section 7 · Weekend rules",
+    anchor: "§3 Transfers / §7 Weekend rules",
     excerpt:
       "§3: Always transfer after-hours emergency calls to the on-call supervisor. §7: On weekends do not transfer calls; take a callback number and promise a call back.",
-    note: "Written by the implementation team, not the customer. Two sections give opposite instructions.",
+    note: "Written by the implementation team, not the customer.",
   },
   {
     id: "scan",
     title: "Archived move-in checklist",
     type: "PDF · scanned",
     received: "Oct 26, 2026",
-    scope: "Unresolved",
     suppliedBy: "Jordan Lee",
     parse: "Needs attention",
-    extraction: "Not started",
-    review: "Not started",
-    icon: "PDF",
+    flagged: true,
     anchor: "No readable text",
     excerpt: "No text could be extracted from this scan.",
-    note: "Simulated unsupported scan. Request a text-based copy or enter a manual note with provenance.",
-  },
-  {
-    id: "empty",
-    title: "Old leasing addendum",
-    type: "PDF · 3 pages",
-    received: "Oct 21, 2026",
-    scope: "Maple Grove",
-    suppliedBy: "Maya Chen",
-    parse: "Parsed",
-    extraction: "Zero candidates",
-    review: "Needs review",
-    icon: "PDF",
-    anchor: "p. 1–3",
-    excerpt: "Historical addendum with no usable current agent instructions.",
-    note: "Zero AI candidates does not prove the document has no useful information.",
-  },
-  {
-    id: "vendor-notice",
-    title: "Vendor escalation notice",
-    type: "Email · EML",
-    received: "Oct 27, 2026",
-    scope: "Company-wide",
-    suppliedBy: "Jordan Lee",
-    parse: "Parsed",
-    extraction: "Failed",
-    review: "Not started",
-    icon: "TXT",
-    anchor: "Body · vendor escalation",
-    excerpt:
-      "The current vendor escalation process was not extracted from this notice.",
-    note: "Simulated extraction failure. Retry or capture a manual note with its source and scope before using this instruction.",
+    note: "Request a text-based copy, or waive the fact with a reason.",
   },
 ];
+
+export const lateSource: Source = {
+  id: "email-maya",
+  title: "Email from Maya Chen",
+  type: "Email · EML",
+  received: "Oct 29, 2026",
+  suppliedBy: "Maya Chen",
+  parse: "Parsed",
+  anchor: "Email body",
+  excerpt:
+    "Our target is 90% of calls answered during staffed hours. Residents locked out of their unit should go to the on-call maintenance supervisor. Both properties allow two cats.",
+  note: "Simulated late-arriving source.",
+};
 
 export const claims: Claim[] = [
   {
@@ -273,10 +269,11 @@ export const claims: Claim[] = [
     anchor: "Handbook · p. 12",
     topic: "weekend-flood-route",
     topicLabel: "Weekend flooding route",
-    scope: "Company-wide",
+    scope: "Maple Grove",
     value: "Transfer to the on-call maintenance supervisor",
     quote:
       "For after-hours emergencies, transfer the caller to the on-call maintenance supervisor.",
+    factIds: ["T2", "S1"],
   },
   {
     id: "c-call-route",
@@ -288,6 +285,7 @@ export const claims: Claim[] = [
     value: "Front desk handles urgent calls first",
     quote:
       "On weekends at Maple Grove, the front desk usually handles urgent calls first.",
+    factIds: ["T2", "S1"],
   },
   {
     id: "c-pets-mg",
@@ -296,8 +294,9 @@ export const claims: Claim[] = [
     topic: "pet-limit",
     topicLabel: "Pet limit",
     scope: "Maple Grove",
-    value: "Up to two cats",
+    value: "2 cats",
     quote: "Maple Grove: up to two cats.",
+    factIds: ["F2"],
   },
   {
     id: "c-pets-wc",
@@ -306,18 +305,20 @@ export const claims: Claim[] = [
     topic: "pet-limit",
     topicLabel: "Pet limit",
     scope: "Willow Court",
-    value: "One cat with written approval",
+    value: "1 cat with written approval",
     quote: "Willow Court: one cat with written approval.",
+    factIds: ["F3"],
   },
   {
-    id: "c-hours",
-    sourceId: "faq",
-    anchor: "Resident FAQ · office-hours",
-    topic: "office-hours",
-    topicLabel: "Leasing office hours",
+    id: "c-pets-late",
+    sourceId: "email-maya",
+    anchor: "Email · last line",
+    topic: "pet-limit",
+    topicLabel: "Pet limit",
     scope: "Company-wide",
-    value: "Monday–Friday, 9 a.m.–5 p.m.",
-    quote: "The leasing desk is open Monday through Friday, 9 a.m.–5 p.m.",
+    value: "2 cats",
+    quote: "Both properties allow two cats.",
+    factIds: ["F2", "F3"],
   },
   {
     id: "c-draft-transfer",
@@ -329,6 +330,7 @@ export const claims: Claim[] = [
     value: "Always transfer after-hours emergencies",
     quote:
       "Always transfer after-hours emergency calls to the on-call supervisor.",
+    factIds: [],
   },
   {
     id: "c-draft-weekend",
@@ -340,210 +342,526 @@ export const claims: Claim[] = [
     value: "Never transfer on weekends; take a callback number",
     quote:
       "On weekends do not transfer calls; take a callback number and promise a call back.",
+    factIds: [],
   },
 ];
 
-const initialKnowledge: Knowledge[] = [
-  {
-    id: "goal",
-    category: "Goals",
-    title: "Reduce unanswered resident calls",
-    summary:
-      "Capture common requests consistently and route urgent issues to a human.",
-    scope: "Company-wide",
-    assignee: "Avery Morgan",
-    status: "Internally reviewed",
+// ---------------------------------------------------------------------------------------------
+// Initial state: 13 known, 3 awaiting clarification, 4 empty; 3 customer-confirmed
+// ---------------------------------------------------------------------------------------------
+
+const fact = (
+  f: Partial<Fact> & Pick<Fact, "id" | "area" | "label">,
+): Fact => ({
+  value: null,
+  sourceId: null,
+  anchor: "Not yet received",
+  evidence: "",
+  owner: OWNER,
+  lifecycle: "Extracted",
+  approval: "Not reviewed",
+  rev: 1,
+  ...f,
+});
+
+const initialFacts: Fact[] = [
+  fact({
+    id: "G1",
+    area: "Goals",
+    label: "Primary objective",
+    value:
+      "Reduce unanswered resident calls while keeping people in the loop for urgent issues.",
+    sourceId: "transcript",
+    anchor: "Kickoff call · 04:15",
     evidence:
       "The team wants fewer missed resident calls without replacing its human escalation process.",
-    anchor: "Kickoff call · 04:15",
+    lifecycle: "Customer confirmed",
+    approval: "Customer approved",
+  }),
+  fact({
+    id: "G2",
+    area: "Goals",
+    label: "Success measure",
+    lifecycle: "Not received",
+    note: "No numeric target has been given.",
+  }),
+  fact({
+    id: "G3",
+    area: "Goals",
+    label: "Call types in and out of scope",
+    value:
+      "In: leasing FAQs, maintenance requests, office hours. Out: payment disputes, legal questions.",
     sourceId: "transcript",
-    detail:
-      "Success indicator: fewer unanswered calls during staffed hours; customer has not supplied a numeric target.",
-    rev: 1,
-  },
-  {
-    id: "hours",
-    category: "FAQs & Policies",
-    title: "Leasing office hours",
-    summary:
-      "Monday–Friday, 9 a.m.–5 p.m.; after-hours messages return next business day.",
-    scope: "Company-wide",
-    assignee: "Avery Morgan",
-    status: "Internally reviewed",
-    evidence: "The leasing desk is open Monday through Friday, 9 a.m.–5 p.m.",
-    anchor: "Resident FAQ · office-hours",
-    sourceId: "faq",
-    detail:
-      "Routine source-supported fact. Internal review is sufficient while no material uncertainty is flagged.",
-    claimIds: ["c-hours"],
-    rev: 1,
-  },
-  {
-    id: "pets",
-    category: "FAQs & Policies",
-    title: "Pet policy varies by property",
-    summary:
-      "Maple Grove allows up to two cats; Willow Court uses a different limit.",
-    scope: "Property-specific",
-    assignee: "Avery Morgan",
-    status: "Needs review",
+    anchor: "Kickoff call · 11:20",
     evidence:
-      "Maple Grove: up to two cats. Willow Court: one cat with written approval.",
-    anchor: "Operations handbook · p. 7",
-    sourceId: "sop",
-    detail:
-      "Separate property rules are an allowed variation, not automatically a conflict.",
-    claimIds: ["c-pets-mg", "c-pets-wc"],
-    rev: 1,
-  },
-  {
-    id: "person",
-    category: "Team & Routing",
-    title: "Maintenance supervisor role",
-    summary:
-      "A role owns after-hours maintenance escalation; the roster stays external.",
-    scope: "Company-wide",
-    assignee: "Avery Morgan",
-    status: "Internally reviewed",
-    evidence:
-      "Maintenance supervisor: on-call role. Weekend schedule: maintained in the external scheduling system.",
-    anchor: "Escalation sheet · B4–F8",
+      "We want it to handle the routine questions, not billing disputes.",
+  }),
+  fact({
+    id: "G4",
+    area: "Goals",
+    label: "Properties and channels",
+    value: "Maple Grove and Willow Court; inbound voice only.",
+    sourceId: "transcript",
+    anchor: "Kickoff call · 02:10",
+    evidence: "Two properties to start, phone calls only.",
+    lifecycle: "Customer confirmed",
+    approval: "Customer approved",
+  }),
+  fact({
+    id: "T1",
+    area: "Team & rules",
+    label: "Roles and responsibilities",
+    value:
+      "Maintenance supervisor (on-call), property manager (fallback), leasing desk (office hours).",
     sourceId: "roster",
-    detail:
-      "This records a role and responsibility. It does not store a live person's shift assignment.",
-    rev: 1,
-  },
-  {
-    id: "emergency",
-    category: "Team & Routing",
-    title: "Weekend emergency routing",
-    summary:
-      "Handbook says on-call supervisor; kickoff call suggests front desk first.",
-    scope: "Maple Grove",
-    assignee: "Avery Morgan",
-    status: "Needs clarification",
+    anchor: "Escalation sheet · B4–F8",
+    evidence:
+      "Maintenance supervisor: on-call role. Property manager: fallback role.",
+    lifecycle: "Customer confirmed",
+    approval: "Customer approved",
+  }),
+  fact({
+    id: "T2",
+    area: "Team & rules",
+    label: "Weekend emergency routing",
+    value:
+      "Candidate only: on-call supervisor per the handbook; the kickoff call says front desk first.",
+    sourceId: "sop",
+    anchor: "Handbook · p. 12 + kickoff call 18:42",
     evidence:
       "For after-hours emergencies, transfer the caller to the on-call maintenance supervisor.",
-    anchor: "Operations handbook · p. 12",
-    sourceId: "sop",
+    lifecycle: "Needs clarification",
     critical: true,
-    detail:
-      "Conflicting current direction for weekend flooding. Do not use either route in agent-facing instructions until the customer answer and staff approval are recorded.",
-    links: ["scenario"],
-    claimIds: ["c-sop-route", "c-call-route"],
-    rev: 1,
-  },
-  {
-    id: "transfer-rule",
-    category: "Team & Routing",
-    title: "After-hours emergency transfer behaviour",
-    summary:
-      "Our draft instructions say both to always transfer and never to transfer on weekends.",
-    scope: "Company-wide",
-    assignee: "Avery Morgan",
-    status: "Needs review",
-    evidence:
-      "Always transfer after-hours emergency calls to the on-call supervisor.",
-    anchor: "Draft instructions · §3 and §7",
-    sourceId: "prompt-draft",
-    detail:
-      "Two sections of the draft agent instructions contradict each other. An agent given both cannot know what to do. Fix the draft before it reaches a customer.",
-    claimIds: ["c-draft-transfer", "c-draft-weekend"],
-    rev: 1,
-  },
-  {
-    id: "scenario",
-    category: "Handling Scenarios",
-    title: "Flooding emergency call",
-    summary:
-      "Collect location, callback number and safety context; transfer path unresolved.",
-    scope: "Maple Grove",
-    assignee: "Avery Morgan",
-    status: "Needs clarification",
+    note: "Two sources disagree.",
+  }),
+  fact({
+    id: "T3",
+    area: "Team & rules",
+    label: "Escalation order and fallback",
+    value:
+      "On-call maintenance supervisor, then property manager; otherwise take a callback number.",
+    sourceId: "sop",
+    anchor: "Handbook · p. 12",
     evidence:
       "If unavailable, take a callback number and alert the property manager.",
-    anchor: "Operations handbook · p. 12",
+    approval: "Specialist reviewed",
+  }),
+  fact({
+    id: "T4",
+    area: "Team & rules",
+    label: "Weekend coverage source",
+    value:
+      "Maintained in the external scheduling system; do not copy a static roster.",
+    sourceId: "roster",
+    anchor: "Escalation sheet · row 8",
+    evidence: "Weekend schedule: maintained in the external scheduling system.",
+    approval: "Specialist reviewed",
+  }),
+  fact({
+    id: "F1",
+    area: "FAQs",
+    label: "Office hours",
+    value:
+      "Monday–Friday, 9 a.m.–5 p.m.; after-hours messages return next business day.",
+    sourceId: "faq",
+    anchor: "Resident FAQ · office-hours",
+    evidence: "The leasing desk is open Monday through Friday, 9 a.m.–5 p.m.",
+    approval: "Specialist reviewed",
+  }),
+  fact({
+    id: "F2",
+    area: "FAQs",
+    label: "Pet policy, Maple Grove",
+    value: "Up to two cats.",
     sourceId: "sop",
-    critical: true,
-    detail:
-      "Trigger: active flooding. Ask: property/unit, callback and immediate safety concern. Escalation and fallback require confirmation before use.",
-    links: ["emergency"],
-    rev: 1,
-  },
-  {
-    id: "integration",
-    category: "Integrations",
-    title: "PMS lookup requirements",
-    summary:
-      "Need authorization owner, allowed lookup operations and fallback.",
-    scope: "Company-wide",
-    assignee: "Avery Morgan",
-    status: "Needs clarification",
+    anchor: "Handbook · p. 7",
+    evidence: "Maple Grove: up to two cats.",
+  }),
+  fact({
+    id: "F3",
+    area: "FAQs",
+    label: "Pet policy, Willow Court",
+    value: "One cat with written approval.",
+    sourceId: "sop",
+    anchor: "Handbook · p. 7",
+    evidence: "Willow Court: one cat with written approval.",
+  }),
+  fact({
+    id: "F4",
+    area: "FAQs",
+    label: "Move-in checklist",
+    sourceId: "scan",
+    anchor: "Scanned PDF · no readable text",
+    lifecycle: "Not received",
+    note: "The scan has no extractable text. Request a text copy or waive with a reason.",
+  }),
+  fact({
+    id: "S1",
+    area: "Scenarios",
+    label: "Flooding emergency",
+    value:
+      "Collect property and unit, callback number and safety concern; escalation route depends on weekend routing.",
+    sourceId: "sop",
+    anchor: "Handbook · p. 12",
     evidence:
-      "The team uses a PMS for resident and work-order context; approved access is still to be defined.",
-    anchor: "Kickoff call · 32:10",
+      "If unavailable, take a callback number and alert the property manager.",
+    lifecycle: "Needs clarification",
+    critical: true,
+  }),
+  fact({
+    id: "S2",
+    area: "Scenarios",
+    label: "Maintenance request",
+    value:
+      "Collect unit, issue and access permission; create a work-order request for the team.",
     sourceId: "transcript",
-    detail:
-      "No credentials are requested or stored here. The live connection is a later setup task. Missing owner and permission scope are preparation blockers until clarified.",
-    rev: 1,
-  },
+    anchor: "Kickoff call · 22:05",
+    evidence:
+      "For regular repairs, we just need the unit, the problem and whether we can enter.",
+  }),
+  fact({
+    id: "S3",
+    area: "Scenarios",
+    label: "Locked out of unit",
+    lifecycle: "Not received",
+    note: "Not yet discussed.",
+  }),
+  fact({
+    id: "S4",
+    area: "Scenarios",
+    label: "Unsupported question",
+    value:
+      "Say the team will follow up, take a callback number, and return the call next business day.",
+    anchor: "Implementation team standard",
+    evidence: "Our standard handling for anything outside the knowledge base.",
+    approval: "Specialist reviewed",
+  }),
+  fact({
+    id: "I1",
+    area: "Integrations",
+    label: "Property-system name",
+    value:
+      "Resident and work-order system (PMS); product name to be confirmed.",
+    sourceId: "transcript",
+    anchor: "Kickoff call · 32:10",
+    evidence:
+      "We use our property management system for resident and work-order context.",
+    approval: "Specialist reviewed",
+  }),
+  fact({
+    id: "I2",
+    area: "Integrations",
+    label: "Authorization owner",
+    lifecycle: "Not received",
+    critical: true,
+    note: "Nobody has said who can authorize access. No credentials are requested or stored here.",
+  }),
+  fact({
+    id: "I3",
+    area: "Integrations",
+    label: "Allowed operations",
+    value:
+      "Proposed by us: read-only lookup of resident and work-order status.",
+    anchor: "Implementation team proposal",
+    evidence: "Our proposal; the customer has not agreed.",
+    lifecycle: "Needs clarification",
+    critical: true,
+  }),
+  fact({
+    id: "I4",
+    area: "Integrations",
+    label: "Failure fallback",
+    value: "Proposed by us: take a message; never guess live data.",
+    anchor: "Implementation team proposal",
+    evidence: "Our proposal; the customer has not reviewed it.",
+  }),
 ];
 
 export const initialState: PrototypeState = {
-  knowledge: initialKnowledge,
-  knowledgeRevision: 1,
-  packageSnapshot: 0,
+  facts: initialFacts,
   requests: [],
-  sourceRun: [],
   resolutions: {},
   tests: {},
-  consistencyRunAt: 0,
+  extraTests: [],
+  addedSources: [],
+  sourceRevision: 1,
+  consistencyRun: null,
+  manualLog: {},
   questions: [
     {
       id: "q-emergency",
       title: "Weekend flooding route",
-      text: "For a flooding emergency at Maple Grove on a weekend, should the agent route the caller to the front desk first or directly to the on-call maintenance supervisor? If neither, what is the correct handoff and fallback?",
-      proposed: "AI-drafted example · staff must review",
-      why: "The handbook and kickoff transcript give different weekend directions for the same property.",
+      text: "For a flooding emergency at Maple Grove on a weekend, who should the agent route the caller to first?",
+      why: "The handbook and the kickoff call give different weekend directions for the same property.",
       source: "Handbook p. 12 + kickoff call 18:42",
       recipientRole: "Operations lead",
       status: "AI draft",
-      knowledgeIds: ["emergency", "scenario"],
+      factIds: ["T2", "S1"],
+      options: [
+        "Route to the on-call maintenance supervisor first",
+        "Route to the front desk first, then the supervisor",
+        "Something else (explain below)",
+      ],
       revisions: [],
       reviewedRevision: 0,
       conflictId: "weekend-flood-route",
     },
     {
       id: "q-integration",
-      title: "PMS access owner",
-      text: "Who can authorize the PMS lookups needed for resident and work-order context, which operations may the agent request, and what should happen when lookup is unavailable?",
-      proposed: "AI-drafted example · staff must review",
-      why: "The integration owner, permitted operations and safe fallback are not yet documented.",
+      title: "Property-system access",
+      text: "Who can authorize read-only lookups in the property system, and what should the agent do when a lookup is unavailable?",
+      why: "The authorization owner is unknown and the allowed operations are only our proposal.",
       source: "Kickoff call 32:10",
       recipientRole: "Operations lead",
       status: "AI draft",
-      knowledgeIds: ["integration"],
+      factIds: ["I2", "I3"],
+      options: [
+        "Maya Chen authorizes read-only lookups",
+        "Someone else authorizes (name them below)",
+        "No lookups for now",
+      ],
       revisions: [],
       reviewedRevision: 0,
     },
     {
       id: "q-pets",
-      title: "Willow Court pet exception",
-      text: "Does Willow Court require written approval for one cat, and are there any exceptions the team should know about?",
-      proposed: "AI-drafted example · staff must review",
-      why: "The property-specific limit is present, but exception handling is not confirmed.",
+      title: "Pet limits by property",
+      text: "What is the correct pet limit at each property, including any exceptions?",
+      why: "The handbook sets limits per property; a later email says both allow two cats.",
       source: "Handbook p. 7",
       recipientRole: "Property manager",
       status: "AI draft",
-      knowledgeIds: ["pets"],
+      factIds: ["F2", "F3"],
+      options: [
+        "Per property: two cats at Maple Grove, one cat at Willow Court",
+        "Two cats at both properties",
+        "Something else (explain below)",
+      ],
+      defaultIfNoReply:
+        "Keep the limits per property and flag them as unconfirmed",
       revisions: [],
       reviewedRevision: 0,
+      conflictId: "pet-limit",
     },
   ],
 };
 
 // ---------------------------------------------------------------------------------------------
-// Questions and answers
+// Small helpers
+// ---------------------------------------------------------------------------------------------
+
+export const factById = (state: PrototypeState, id: string) =>
+  state.facts.find((f) => f.id === id);
+export const shownValue = (f: Fact) => f.customerAnswer?.value ?? f.value;
+export const isConfirmed = (f: Fact) => f.approval === "Customer approved";
+export const allSources = (state: PrototypeState): Source[] => [
+  ...baseSources,
+  ...(state.addedSources.includes(lateSource.id) ? [lateSource] : []),
+];
+const bump = (state: PrototypeState, key: string): PrototypeState => ({
+  ...state,
+  manualLog: { ...state.manualLog, [key]: (state.manualLog[key] ?? 0) + 1 },
+});
+
+export type Coverage = "known" | "clarifying" | "empty" | "waived";
+export function coverageOf(f: Fact): Coverage {
+  if (f.waived) return "waived";
+  if (f.lifecycle === "Not received") return "empty";
+  if (f.lifecycle === "Needs clarification") return "clarifying";
+  return "known";
+}
+export function coverage(state: PrototypeState) {
+  const c = {
+    total: state.facts.length,
+    known: 0,
+    clarifying: 0,
+    empty: 0,
+    waived: 0,
+    confirmed: 0,
+  };
+  for (const f of state.facts) {
+    c[coverageOf(f)]++;
+    if (isConfirmed(f)) c.confirmed++;
+  }
+  return c;
+}
+/** Lifecycle as shown: a configured fact whose every test passes is "Tested". */
+export function shownLifecycle(state: PrototypeState, f: Fact): Lifecycle {
+  if (f.lifecycle !== "Configured") return f.lifecycle;
+  const mine = testCases(state).filter((t) => t.factId === f.id);
+  return mine.length > 0 && mine.every((t) => testStatus(state, t) === "Pass")
+    ? "Tested"
+    : "Configured";
+}
+/** Goals describe intent, not agent behaviour: they are reviewed but never configured or tested. */
+export const configurable = (f: Fact) => usable(f) && f.area !== "Goals";
+/** A fact the agent can be built and tested from. */
+export const usable = (f: Fact) =>
+  !f.waived &&
+  f.value !== null &&
+  f.lifecycle !== "Not received" &&
+  f.lifecycle !== "Needs clarification" &&
+  f.approval !== "Not reviewed";
+
+// ---------------------------------------------------------------------------------------------
+// Sources arriving late
+// ---------------------------------------------------------------------------------------------
+
+export function addSource(state: PrototypeState): PrototypeState {
+  if (state.addedSources.includes(lateSource.id)) return state;
+  const fill = (
+    f: Fact,
+    value: string,
+    anchor: string,
+    evidence: string,
+  ): Fact => ({
+    ...f,
+    value,
+    sourceId: lateSource.id,
+    anchor,
+    evidence,
+    lifecycle: "Extracted",
+    approval: "Not reviewed",
+    note: undefined,
+    rev: f.rev + 1,
+  });
+  return {
+    ...state,
+    addedSources: [...state.addedSources, lateSource.id],
+    sourceRevision: state.sourceRevision + 1,
+    facts: state.facts.map((f) =>
+      f.id === "G2"
+        ? fill(
+            f,
+            "Answer 90% of calls during staffed hours.",
+            "Email · first line",
+            "Our target is 90% of calls answered during staffed hours.",
+          )
+        : f.id === "S3"
+          ? fill(
+              f,
+              "Transfer to the on-call maintenance supervisor.",
+              "Email · second line",
+              "Residents locked out of their unit should go to the on-call maintenance supervisor.",
+            )
+          : f,
+    ),
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Consistency check
+// ---------------------------------------------------------------------------------------------
+
+const overlaps = (a: string, b: string) =>
+  a === b || a === "Company-wide" || b === "Company-wide";
+
+export function detectConflicts(state: PrototypeState): {
+  conflicts: Conflict[];
+  variations: Variation[];
+} {
+  const present = new Set(allSources(state).map((s) => s.id));
+  const active = claims.filter((c) => present.has(c.sourceId));
+  const conflicts: Conflict[] = [];
+  const variations: Variation[] = [];
+  for (const topic of [...new Set(active.map((c) => c.topic))]) {
+    const group = active.filter((c) => c.topic === topic);
+    const clashing = new Set<string>();
+    for (const a of group)
+      for (const b of group)
+        if (a.id < b.id && a.value !== b.value && overlaps(a.scope, b.scope)) {
+          clashing.add(a.id);
+          clashing.add(b.id);
+        }
+    const label = group[0].topicLabel;
+    if (clashing.size) {
+      const involved = group.filter((c) => clashing.has(c.id));
+      conflicts.push({
+        id: topic,
+        topicLabel: label,
+        scope:
+          involved.find((c) => c.scope !== "Company-wide")?.scope ??
+          "Company-wide",
+        claimIds: involved.map((c) => c.id).sort(),
+        needs: involved.every((c) => c.sourceId === "prompt-draft")
+          ? "internal"
+          : "customer",
+        factIds: [...new Set(involved.flatMap((c) => c.factIds))],
+        questionId: state.questions.find((q) => q.conflictId === topic)?.id,
+      });
+    } else if (new Set(group.map((c) => c.value)).size > 1) {
+      variations.push({
+        id: topic,
+        topicLabel: label,
+        claimIds: group.map((c) => c.id),
+      });
+    }
+  }
+  return { conflicts, variations };
+}
+
+export function consistencyReport(state: PrototypeState) {
+  const { conflicts, variations } = detectConflicts(state);
+  const rows = conflicts.map((c) => {
+    const r = state.resolutions[c.id];
+    const resolution = r && r.claimSig === c.claimIds.join("|") ? r : undefined;
+    return { ...c, resolution, resolved: Boolean(resolution) };
+  });
+  const present = new Set(allSources(state).map((s) => s.id));
+  const active = claims.filter((c) => present.has(c.sourceId));
+  return {
+    ran: state.consistencyRun !== null,
+    stale:
+      state.consistencyRun !== null &&
+      state.consistencyRun !== state.sourceRevision,
+    claimsChecked: active.length,
+    sourcesChecked: new Set(active.map((c) => c.sourceId)).size,
+    conflicts: rows,
+    open: rows.filter((c) => !c.resolved),
+    variations,
+  };
+}
+
+export function runConsistencyCheck(state: PrototypeState): PrototypeState {
+  return { ...state, consistencyRun: state.sourceRevision };
+}
+
+/** Fix a contradiction inside our own draft by choosing the intended instruction. */
+export function resolveInternally(
+  state: PrototypeState,
+  conflictId: string,
+  chosenClaimId: string,
+  note: string,
+): PrototypeState {
+  const conflict = detectConflicts(state).conflicts.find(
+    (c) => c.id === conflictId,
+  );
+  if (
+    !conflict ||
+    conflict.needs !== "internal" ||
+    !conflict.claimIds.includes(chosenClaimId) ||
+    !note.trim() ||
+    consistencyReport(state).conflicts.find((c) => c.id === conflictId)
+      ?.resolved
+  )
+    return state;
+  return {
+    ...state,
+    resolutions: {
+      ...state.resolutions,
+      [conflictId]: {
+        conflictId,
+        how: "internal fix",
+        note: note.trim(),
+        claimSig: conflict.claimIds.join("|"),
+        chosenClaimId,
+      },
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Questions, requests and answers
 // ---------------------------------------------------------------------------------------------
 
 export function updateQuestion(
@@ -559,7 +877,9 @@ export function updateQuestion(
   };
 }
 
-/** Create one request per recipient from questions whose wording staff approved. */
+export const questionCritical = (state: PrototypeState, q: Question) =>
+  q.factIds.some((id) => factById(state, id)?.critical);
+
 export function sendRequest(
   state: PrototypeState,
   role: string,
@@ -593,6 +913,25 @@ export function sentQuestionIds(state: PrototypeState, role?: string) {
     .flatMap((r) => r.questionIds);
 }
 
+/** A resolved question whose conflict has come back (new evidence) can be asked again. */
+export function reopenQuestion(
+  state: PrototypeState,
+  id: string,
+): PrototypeState {
+  const q = state.questions.find((x) => x.id === id);
+  if (!q || (q.status !== "Resolved" && q.status !== "Defaulted")) return state;
+  return {
+    ...state,
+    requests: state.requests.map((r) => ({
+      ...r,
+      questionIds: r.questionIds.filter((x) => x !== id),
+    })),
+    questions: state.questions.map((x) =>
+      x.id === id ? { ...x, status: "Ready to send" as const } : x,
+    ),
+  };
+}
+
 export function submitAnswer(
   state: PrototypeState,
   id: string,
@@ -604,7 +943,7 @@ export function submitAnswer(
   if (
     !question ||
     !sentQuestionIds(state).includes(id) ||
-    !["Sent", "Response received", "In review", "Resolved"].includes(
+    !["Sent", "Response received", "Resolved", "Defaulted"].includes(
       question.status,
     )
   )
@@ -616,29 +955,31 @@ export function submitAnswer(
     comment: comment.trim(),
     at: `Revision ${question.revisions.length + 1} · simulated session`,
   };
-  const questions = state.questions.map((q) =>
-    q.id === id
-      ? {
-          ...q,
-          status: "Response received" as const,
-          revisions: [...q.revisions, revision],
-        }
-      : q,
-  );
-  const knowledge = state.knowledge.map((item) =>
-    question.knowledgeIds.includes(item.id)
-      ? { ...item, status: "Needs clarification" as const, rev: item.rev + 1 }
-      : item,
-  );
-  // An amendment reopens whatever conflict this question had resolved.
   const resolutions = { ...state.resolutions };
   if (question.conflictId) delete resolutions[question.conflictId];
   return {
     ...state,
-    questions,
-    knowledge,
     resolutions,
-    knowledgeRevision: state.knowledgeRevision + 1,
+    questions: state.questions.map((q) =>
+      q.id === id
+        ? {
+            ...q,
+            status: "Response received" as const,
+            revisions: [...q.revisions, revision],
+          }
+        : q,
+    ),
+    facts: state.facts.map((f) =>
+      question.factIds.includes(f.id)
+        ? {
+            ...f,
+            lifecycle: "Needs clarification" as const,
+            approval: "Not reviewed" as const,
+            note: undefined,
+            rev: f.rev + 1,
+          }
+        : f,
+    ),
   };
 }
 
@@ -656,243 +997,219 @@ export function reviewAnswer(
   )
     return state;
   const revision = question.revisions.length;
-  const questions = state.questions.map((q) =>
-    q.id === id
-      ? { ...q, status: "Resolved" as const, reviewedRevision: revision }
-      : q,
-  );
-  // The customer's wording is attached beside each linked item. It never replaces the
-  // source-based summary, so items sharing a question keep their own content.
-  const knowledge = state.knowledge.map((item) =>
-    question.knowledgeIds.includes(item.id)
-      ? {
-          ...item,
-          status: item.critical
-            ? ("Customer confirmed" as const)
-            : ("Internally reviewed" as const),
-          customerAnswer: { questionId: id, value: latest.value, revision },
-          rev: item.rev + 1,
-        }
-      : item,
-  );
   const resolutions = { ...state.resolutions };
-  if (question.conflictId)
-    resolutions[question.conflictId] = {
-      conflictId: question.conflictId,
+  const conflict =
+    question.conflictId &&
+    detectConflicts(state).conflicts.find((c) => c.id === question.conflictId);
+  if (conflict)
+    resolutions[conflict.id] = {
+      conflictId: conflict.id,
       how: "customer answer",
       note: latest.value,
+      claimSig: conflict.claimIds.join("|"),
     };
   return {
     ...state,
-    questions,
-    knowledge,
     resolutions,
-    knowledgeRevision: state.knowledgeRevision + 1,
+    questions: state.questions.map((q) =>
+      q.id === id
+        ? { ...q, status: "Resolved" as const, reviewedRevision: revision }
+        : q,
+    ),
+    facts: state.facts.map((f) =>
+      question.factIds.includes(f.id)
+        ? {
+            ...f,
+            value: f.value ?? latest.value,
+            lifecycle: "Customer confirmed" as const,
+            approval: "Customer approved" as const,
+            customerAnswer: { questionId: id, value: latest.value, revision },
+            note: undefined,
+            rev: f.rev + 1,
+          }
+        : f,
+    ),
   };
 }
 
-// ---------------------------------------------------------------------------------------------
-// Consistency check: contradictions between sources, and inside our own draft instructions
-// ---------------------------------------------------------------------------------------------
-
-const overlaps = (a: string, b: string) =>
-  a === b || a === "Company-wide" || b === "Company-wide";
-
-export function detectConflicts(): {
-  conflicts: Conflict[];
-  variations: Variation[];
-} {
-  const conflicts: Conflict[] = [];
-  const variations: Variation[] = [];
-  const topics = [...new Set(claims.map((c) => c.topic))];
-  for (const topic of topics) {
-    const group = claims.filter((c) => c.topic === topic);
-    const clashing = new Set<string>();
-    for (const a of group)
-      for (const b of group)
-        if (a.id < b.id && a.value !== b.value && overlaps(a.scope, b.scope)) {
-          clashing.add(a.id);
-          clashing.add(b.id);
-        }
-    const label = group[0].topicLabel;
-    if (clashing.size) {
-      const involved = group.filter((c) => clashing.has(c.id));
-      const knowledgeIds = initialKnowledge
-        .filter((k) => k.claimIds?.some((id) => clashing.has(id)))
-        .map((k) => k.id);
-      conflicts.push({
-        id: topic,
-        topicLabel: label,
-        scope:
-          involved.find((c) => c.scope !== "Company-wide")?.scope ??
-          "Company-wide",
-        claimIds: involved.map((c) => c.id),
-        needs: involved.every((c) => c.sourceId !== "prompt-draft")
-          ? "customer"
-          : "internal",
-        knowledgeIds,
-        questionId: initialState.questions.find((q) => q.conflictId === topic)
-          ?.id,
-      });
-    } else if (new Set(group.map((c) => c.value)).size > 1) {
-      variations.push({
-        id: topic,
-        topicLabel: label,
-        claimIds: group.map((c) => c.id),
-      });
-    }
-  }
-  return { conflicts, variations };
-}
-
-export function consistencyReport(state: PrototypeState) {
-  const { conflicts, variations } = detectConflicts();
-  const rows = conflicts.map((c) => ({
-    ...c,
-    resolution: state.resolutions[c.id],
-    resolved: Boolean(state.resolutions[c.id]),
-  }));
-  return {
-    ran: state.consistencyRunAt > 0,
-    claimsChecked: claims.length,
-    sourcesChecked: new Set(claims.map((c) => c.sourceId)).size,
-    conflicts: rows,
-    open: rows.filter((c) => !c.resolved),
-    variations,
-  };
-}
-
-export function runConsistencyCheck(state: PrototypeState): PrototypeState {
-  return { ...state, consistencyRunAt: state.knowledgeRevision };
-}
-
-/** Fix a contradiction inside our own draft by choosing the intended instruction. */
-export function resolveInternally(
+/** Simulates the deadline passing with no reply. Never allowed for critical questions. */
+export function applyDefault(
   state: PrototypeState,
-  conflictId: string,
-  chosenClaimId: string,
-  note: string,
+  id: string,
 ): PrototypeState {
-  const conflict = detectConflicts().conflicts.find((c) => c.id === conflictId);
+  const q = state.questions.find((x) => x.id === id);
   if (
-    !conflict ||
-    conflict.needs !== "internal" ||
-    !conflict.claimIds.includes(chosenClaimId) ||
-    !note.trim() ||
-    state.resolutions[conflictId]
+    !q ||
+    !q.defaultIfNoReply ||
+    q.status !== "Sent" ||
+    q.revisions.length > 0 ||
+    questionCritical(state, q)
   )
+    return state;
+  const resolutions = { ...state.resolutions };
+  const conflict =
+    q.conflictId &&
+    detectConflicts(state).conflicts.find((c) => c.id === q.conflictId);
+  if (conflict)
+    resolutions[conflict.id] = {
+      conflictId: conflict.id,
+      how: "default",
+      note: q.defaultIfNoReply,
+      claimSig: conflict.claimIds.join("|"),
+    };
+  return {
+    ...state,
+    resolutions,
+    questions: state.questions.map((x) =>
+      x.id === id ? { ...x, status: "Defaulted" as const } : x,
+    ),
+    facts: state.facts.map((f) =>
+      q.factIds.includes(f.id)
+        ? {
+            ...f,
+            approval:
+              f.approval === "Not reviewed"
+                ? ("Specialist reviewed" as const)
+                : f.approval,
+            note: `Proceeding on default, not confirmed by the customer: ${q.defaultIfNoReply}.`,
+            rev: f.rev + 1,
+          }
+        : f,
+    ),
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Fact actions
+// ---------------------------------------------------------------------------------------------
+
+export function reviewFact(state: PrototypeState, id: string): PrototypeState {
+  const f = factById(state, id);
+  if (
+    !f ||
+    f.value === null ||
+    f.approval !== "Not reviewed" ||
+    f.lifecycle === "Needs clarification"
+  )
+    return state;
+  return bump(
+    {
+      ...state,
+      facts: state.facts.map((x) =>
+        x.id === id ? { ...x, approval: "Specialist reviewed" as const } : x,
+      ),
+    },
+    "review-fact",
+  );
+}
+
+export function markConfigured(
+  state: PrototypeState,
+  id: string,
+): PrototypeState {
+  const f = factById(state, id);
+  if (
+    !f ||
+    !configurable(f) ||
+    f.lifecycle === "Configured" ||
+    (f.critical && !isConfirmed(f))
+  )
+    return state;
+  return bump(
+    {
+      ...state,
+      facts: state.facts.map((x) =>
+        x.id === id ? { ...x, lifecycle: "Configured" as const } : x,
+      ),
+    },
+    "configure",
+  );
+}
+
+export function waiveFact(
+  state: PrototypeState,
+  id: string,
+  reason: string,
+): PrototypeState {
+  const f = factById(state, id);
+  if (!f || coverageOf(f) !== "empty" || f.critical || !reason.trim())
     return state;
   return {
     ...state,
-    resolutions: {
-      ...state.resolutions,
-      [conflictId]: {
-        conflictId,
-        how: "internal fix",
-        note: note.trim(),
-        chosenClaimId,
-      },
-    },
-    knowledge: state.knowledge.map((k) =>
-      conflict.knowledgeIds.includes(k.id)
-        ? { ...k, status: "Internally reviewed" as const, rev: k.rev + 1 }
-        : k,
+    facts: state.facts.map((x) =>
+      x.id === id
+        ? { ...x, waived: { reason: reason.trim(), owner: OWNER } }
+        : x,
     ),
-    knowledgeRevision: state.knowledgeRevision + 1,
   };
 }
 
 // ---------------------------------------------------------------------------------------------
-// Readiness, testing and the launch checklist
+// Readiness, tests, launch checklist
 // ---------------------------------------------------------------------------------------------
-
-const reviewed = (k: Knowledge) =>
-  k.status === "Internally reviewed" || k.status === "Customer confirmed";
 
 export function readiness(state: PrototypeState) {
   const report = consistencyReport(state);
-  const criticalOpen = state.knowledge.filter(
-    (k) => k.critical && k.status !== "Customer confirmed",
-  );
-  const integrationsOpen = state.knowledge.filter(
-    (k) => k.category === "Integrations" && !reviewed(k),
-  );
+  const criticalOpen = state.facts.filter((f) => f.critical && !isConfirmed(f));
   const blockers = [
     ...(!report.ran
-      ? ["The consistency check has not been run on the collected sources."]
-      : []),
+      ? ["The consistency check has not been run."]
+      : report.stale
+        ? [
+            "A new source arrived after the last consistency check; run it again.",
+          ]
+        : []),
     ...report.open.map(
       (c) =>
         `Open conflict: ${c.topicLabel} (${c.claimIds.length} statements disagree).`,
     ),
-    ...criticalOpen.map(
-      (k) =>
-        `${k.title} needs a reviewed customer answer and explicit specialist approval.`,
-    ),
-    ...integrationsOpen.map((k) =>
-      k.id === "integration"
-        ? "PMS authorization owner, allowed operations and safe fallback are still unknown."
-        : `${k.title} is still unresolved.`,
-    ),
+    ...criticalOpen.map((f) => `${f.label} needs a reviewed customer answer.`),
+  ];
+  const risks = [
+    ...state.facts
+      .filter((f) => f.waived)
+      .map((f) => `${f.label} waived: ${f.waived!.reason}`),
+    ...state.questions
+      .filter((q) => q.status === "Defaulted")
+      .map((q) => `${q.title}: proceeding on default, not customer confirmed.`),
   ];
   return {
     ready: blockers.length === 0,
     critical: criticalOpen.length,
     openConflicts: report.open.length,
-    stale:
-      state.packageSnapshot > 0 &&
-      state.knowledgeRevision !== state.packageSnapshot,
     blockers,
+    risks,
   };
 }
 
-export type TestKind =
-  | "Normal"
-  | "Negative"
-  | "Boundary"
-  | "After-hours"
-  | "Transfer"
-  | "Emergency"
-  | "Unsupported question"
-  | "Integration failure";
-export type TestCase = {
-  id: string;
-  knowledgeId: string;
-  kind: TestKind;
-  scenario: string;
-  expected: string;
-  critical: boolean;
-};
-
-/** Manual test cases for every reviewed knowledge item. Nothing here is executed by the app. */
+/** Manual test cases for every usable fact. Nothing here is executed by the app. */
 export function testCases(state: PrototypeState): TestCase[] {
   const cases: TestCase[] = [];
-  for (const k of state.knowledge.filter(reviewed)) {
+  for (const f of state.facts.filter(usable)) {
     const make = (kind: TestKind, scenario: string, expected: string) =>
       cases.push({
-        id: `T-${k.id}-${kind.toLowerCase().replace(/[^a-z]+/g, "-")}`,
-        knowledgeId: k.id,
+        id: `T-${f.id}-${kind.toLowerCase().replace(/[^a-z]+/g, "-")}`,
+        factId: f.id,
         kind,
         scenario,
         expected,
-        critical: Boolean(k.critical),
+        critical: Boolean(f.critical),
       });
-    make(
-      "Normal",
-      `A caller asks about “${k.title}” (${k.scope}).`,
-      k.customerAnswer?.value ?? k.summary,
-    );
+    // Goals describe intent, not agent behaviour, so they are not tested directly.
+    if (f.area === "Goals") continue;
+    make("Normal", `A caller asks about “${f.label}”.`, shownValue(f) ?? "");
     make(
       "Negative",
-      `A caller asks for something “${k.title}” does not allow.`,
+      `A caller asks for something “${f.label}” does not allow.`,
       "Declines or escalates; does not invent a permission.",
     );
-    make(
-      "Boundary",
-      `A caller's situation sits at the edge of the scope (${k.scope}) or conditions.`,
-      "Applies the stated scope; escalates when unsure.",
-    );
-    if (k.category === "Team & Routing") {
+    if (f.critical)
+      make(
+        "Boundary",
+        `A caller's situation sits at the edge of “${f.label}”.`,
+        "Applies the stated rule; escalates when unsure.",
+      );
+    if (f.area === "Team & rules") {
       make(
         "After-hours",
         "The call arrives on a weekend or after hours.",
@@ -904,26 +1221,26 @@ export function testCases(state: PrototypeState): TestCase[] {
         "Takes a callback number and alerts the fallback role.",
       );
     }
-    if (k.critical)
+    if (f.critical)
       make(
         "Emergency",
         "A resident reports an active emergency such as flooding.",
         "Collects location, callback number and safety context, then follows the confirmed route.",
       );
-    if (k.category === "FAQs & Policies")
+    if (f.area === "FAQs")
       make(
         "Unsupported question",
         "The caller asks something the knowledge base does not cover.",
-        "Says it will pass the question to the team; does not guess.",
+        "Says the team will follow up; does not guess.",
       );
-    if (k.category === "Integrations")
+    if (f.area === "Integrations")
       make(
         "Integration failure",
         "The property-system lookup is unavailable.",
         "Does not guess live data; takes a message.",
       );
   }
-  return cases;
+  return [...cases, ...state.extraTests];
 }
 
 export type TestStatus = "Not run" | "Pass" | "Fail" | "Needs retest";
@@ -931,8 +1248,8 @@ export type TestStatus = "Not run" | "Pass" | "Fail" | "Needs retest";
 export function testStatus(state: PrototypeState, tc: TestCase): TestStatus {
   const record = state.tests[tc.id];
   if (!record) return "Not run";
-  const k = state.knowledge.find((item) => item.id === tc.knowledgeId);
-  if (!k || record.knowledgeRev !== k.rev) return "Needs retest";
+  const f = factById(state, tc.factId);
+  if (!f || record.factRev !== f.rev) return "Needs retest";
   return record.result;
 }
 
@@ -943,30 +1260,44 @@ export function recordTest(
   note = "",
 ): PrototypeState {
   const tc = testCases(state).find((t) => t.id === id);
-  const k = tc && state.knowledge.find((item) => item.id === tc.knowledgeId);
-  if (!tc || !k) return state;
-  return {
-    ...state,
-    tests: {
-      ...state.tests,
-      [id]: { result, note: note.trim(), knowledgeRev: k.rev },
+  const f = tc && factById(state, tc.factId);
+  if (!tc || !f) return state;
+  return bump(
+    {
+      ...state,
+      tests: {
+        ...state.tests,
+        [id]: { result, note: note.trim(), factRev: f.rev },
+      },
     },
-  };
+    "record-test",
+  );
 }
 
 export function launchChecklist(state: PrototypeState) {
   const status = readiness(state);
-  const cases = testCases(state);
-  const statuses = cases.map((t) => ({ t, s: testStatus(state, t) }));
+  const statuses = testCases(state).map((t) => ({
+    t,
+    s: testStatus(state, t),
+  }));
   const critical = statuses.filter((x) => x.t.critical);
-  const unreviewed = state.knowledge.filter((k) => !reviewed(k));
-  const unanswered = state.questions.filter((q) => q.status !== "Resolved");
+  const unreviewed = state.facts.filter(
+    (f) =>
+      coverageOf(f) !== "empty" &&
+      coverageOf(f) !== "waived" &&
+      f.approval === "Not reviewed",
+  );
+  const emptyOpen = state.facts.filter((f) => coverageOf(f) === "empty");
+  const openQuestions = state.questions.filter(
+    (q) => q.status !== "Resolved" && q.status !== "Defaulted",
+  );
   const item = (id: string, label: string, pass: boolean, detail: string) => ({
     id,
     label,
     pass,
     detail,
   });
+  const count = (s: TestStatus) => statuses.filter((x) => x.s === s).length;
   return [
     item(
       "preparation",
@@ -977,18 +1308,24 @@ export function launchChecklist(state: PrototypeState) {
         : `${status.blockers.length} open.`,
     ),
     item(
+      "coverage",
+      "Every required fact has a value or a waiver",
+      emptyOpen.length === 0,
+      emptyOpen.length ? `${emptyOpen.length} empty.` : "All covered.",
+    ),
+    item(
       "reviewed",
-      "Every knowledge item reviewed",
+      "Every fact reviewed",
       unreviewed.length === 0,
       unreviewed.length
-        ? `${unreviewed.length} still awaiting review.`
+        ? `${unreviewed.length} awaiting review.`
         : "All reviewed.",
     ),
     item(
       "questions",
-      "Customer questions answered and reviewed",
-      unanswered.length === 0,
-      unanswered.length ? `${unanswered.length} open.` : "All resolved.",
+      "Customer questions closed",
+      openQuestions.length === 0,
+      openQuestions.length ? `${openQuestions.length} open.` : "All closed.",
     ),
     item(
       "critical-tests",
@@ -1000,82 +1337,176 @@ export function launchChecklist(state: PrototypeState) {
     ),
     item(
       "no-retest",
-      "No failing or stale test results",
-      statuses.length > 0 &&
-        !statuses.some((x) => x.s === "Fail" || x.s === "Needs retest"),
-      `${statuses.filter((x) => x.s === "Fail").length} failing · ${statuses.filter((x) => x.s === "Needs retest").length} need retest.`,
+      "No failing or stale results",
+      statuses.length > 0 && count("Fail") === 0 && count("Needs retest") === 0,
+      `${count("Fail")} failing · ${count("Needs retest")} need retest.`,
     ),
     item(
-      "coverage",
-      "Every test case has a result",
-      statuses.length > 0 && statuses.every((x) => x.s === "Pass"),
-      `${statuses.filter((x) => x.s === "Pass").length} of ${statuses.length} passed.`,
+      "all-tests",
+      "Every test case has a passing result",
+      statuses.length > 0 && count("Pass") === statuses.length,
+      `${count("Pass")} of ${statuses.length} passed.`,
     ),
   ];
 }
 
 // ---------------------------------------------------------------------------------------------
-// Progress transparency
+// Steps with checklists, derived from the data
 // ---------------------------------------------------------------------------------------------
 
+export type Piece = { label: string; done: boolean };
 export type StepStatus = "Done" | "Current" | "Upcoming";
 export type Step = {
   n: number;
   name: string;
   status: StepStatus;
+  pieces: Piece[];
   detail: string;
 };
 
+const SENT: QuestionStatus[] = [
+  "Sent",
+  "Response received",
+  "Resolved",
+  "Defaulted",
+];
+
 export function onboardingSteps(state: PrototypeState): Step[] {
+  const report = consistencyReport(state);
   const prep = readiness(state);
-  const checklist = launchChecklist(state);
-  const passed = checklist.filter((c) => c.pass).length;
-  const launchDone = checklist.every((c) => c.pass);
-  const needAttention = sources.filter(
-    (s) => s.parse === "Needs attention" || s.extraction === "Failed",
-  ).length;
-  const step = (
-    n: number,
-    name: string,
-    status: StepStatus,
-    detail: string,
-  ): Step => ({
-    n,
-    name,
-    status,
-    detail,
-  });
-  return [
-    step(1, "Kickoff and goals", "Done", "Goals agreed on the kickoff call."),
-    step(
-      2,
-      "Collect information",
-      "Done",
-      `${sources.length} sources received${needAttention ? `; ${needAttention} need a readable copy` : ""}.`,
-    ),
-    step(
-      3,
-      "Clarify and confirm",
-      prep.ready ? "Done" : "Current",
-      prep.ready
-        ? "Conflicts and critical items resolved."
-        : `${prep.blockers.length} open before setup can be prepared.`,
-    ),
-    step(
-      4,
-      "Configure and test",
-      !prep.ready ? "Upcoming" : launchDone ? "Done" : "Current",
-      !prep.ready
-        ? "Starts when step 3 is complete."
-        : `${passed} of ${checklist.length} launch checks passed.`,
-    ),
-    step(
-      5,
-      "Go live and tune",
-      launchDone && prep.ready ? "Current" : "Upcoming",
-      "Weekly check-ins for the first four weeks, then monthly.",
-    ),
+  const cases = testCases(state);
+  const statuses = cases.map((t) => testStatus(state, t));
+  const f = (id: string) => factById(state, id)!;
+  const gapHandled = (x: Fact) =>
+    coverageOf(x) !== "empty" ||
+    state.questions.some(
+      (q) => q.factIds.includes(x.id) && SENT.includes(q.status),
+    );
+  const usableFacts = state.facts.filter(configurable);
+  const defs: { name: string; pieces: Piece[] }[] = [
+    {
+      name: "Kickoff and goals",
+      pieces: [
+        {
+          label: "Primary objective captured",
+          done: coverageOf(f("G1")) === "known",
+        },
+        {
+          label: "Properties and channels agreed",
+          done: isConfirmed(f("G4")),
+        },
+        {
+          label: "Information requested from the customer",
+          done: allSources(state).length > 0,
+        },
+      ],
+    },
+    {
+      name: "Collect information",
+      pieces: [
+        {
+          label: "Every area has a source-backed fact",
+          done: areas.every((a) =>
+            state.facts.some(
+              (x) => x.area === a && x.sourceId && x.value !== null,
+            ),
+          ),
+        },
+        {
+          label: "Every source parsed or flagged",
+          done: allSources(state).every(
+            (s) => s.parse === "Parsed" || s.flagged,
+          ),
+        },
+        {
+          label: "Every fact has an owner",
+          done: state.facts.every((x) => x.owner),
+        },
+      ],
+    },
+    {
+      name: "Clarify and confirm",
+      pieces: [
+        {
+          label: "Every gap asked about or waived",
+          done: state.facts.every(gapHandled),
+        },
+        {
+          label: "Consistency check is current",
+          done: report.ran && !report.stale,
+        },
+        {
+          label: "No open conflicts",
+          done: report.ran && !report.stale && report.open.length === 0,
+        },
+        {
+          label: "Critical facts customer-confirmed",
+          done: prep.critical === 0,
+        },
+      ],
+    },
+    {
+      name: "Configure and test",
+      pieces: [
+        {
+          label: "Every usable fact configured",
+          done:
+            usableFacts.length > 0 &&
+            usableFacts.every((x) => x.lifecycle === "Configured"),
+        },
+        {
+          label: "Critical scenarios tested and passing",
+          done:
+            cases.some((c) => c.critical) &&
+            cases
+              .filter((c) => c.critical)
+              .every((c) => testStatus(state, c) === "Pass"),
+        },
+        {
+          label: "No failing or stale results",
+          done:
+            cases.length > 0 &&
+            !statuses.some((s) => s === "Fail" || s === "Needs retest"),
+        },
+        {
+          label: "Every test case has a passing result",
+          done: cases.length > 0 && statuses.every((s) => s === "Pass"),
+        },
+      ],
+    },
+    {
+      name: "Go live and tune",
+      pieces: [
+        {
+          label: "Launch checklist passed",
+          done: launchChecklist(state).every((c) => c.pass),
+        },
+      ],
+    },
   ];
+  let reachedCurrent = false;
+  return defs.map((d, i) => {
+    const done = d.pieces.every((p) => p.done);
+    const status: StepStatus = reachedCurrent
+      ? "Upcoming"
+      : done
+        ? "Done"
+        : "Current";
+    if (!done) reachedCurrent = true;
+    const complete = d.pieces.filter((p) => p.done).length;
+    return {
+      n: i + 1,
+      name: d.name,
+      pieces: d.pieces,
+      status,
+      detail:
+        status === "Upcoming"
+          ? `Starts when step ${i} is complete.`
+          : status === "Done"
+            ? "All pieces complete."
+            : `${complete} of ${d.pieces.length} pieces done.`,
+    };
+  });
 }
 
 export function currentStep(state: PrototypeState) {
@@ -1092,10 +1523,15 @@ export function needsFromCustomer(
       (q) =>
         (!role || q.recipientRole === role) &&
         sentQuestionIds(state).includes(q.id) &&
-        q.revisions.length === 0,
+        (q.status === "Sent" || q.status === "Response received") &&
+        q.revisions.length === q.reviewedRevision,
     )
     .map((q) => `Answer: ${q.title}`);
 }
+
+// ---------------------------------------------------------------------------------------------
+// Next actions
+// ---------------------------------------------------------------------------------------------
 
 export type NextAction = {
   id: string;
@@ -1107,31 +1543,33 @@ export type NextAction = {
   due: string;
   button: string;
   target: {
-    view: string;
-    knowledgeId?: string;
-    questionId?: string;
-    sourceId?: string;
+    view: "requirements" | "checks" | "qa" | "process";
+    factId?: string;
   };
 };
 
 export function nextActions(state: PrototypeState): NextAction[] {
   const actions: NextAction[] = [];
   const report = consistencyReport(state);
-  const owner = "Avery Morgan";
-  if (!report.ran)
-    actions.push({
+  const a = (x: Omit<NextAction, "owner">) =>
+    actions.push({ ...x, owner: OWNER });
+  if (!report.ran || report.stale)
+    a({
       id: "run-check",
       tone: "orange",
       icon: "◈",
-      title: "Run the consistency check",
-      subtitle: `${claims.length} statements from ${new Set(claims.map((c) => c.sourceId)).size} sources have not been compared`,
-      owner,
+      title: report.stale
+        ? "Run the consistency check again"
+        : "Run the consistency check",
+      subtitle: report.stale
+        ? "A new source arrived after the last check"
+        : "Sources and draft prompts have not been compared",
       due: "Before asking the customer",
-      button: "Run check",
+      button: "Open checks",
       target: { view: "checks" },
     });
-  for (const c of report.open) {
-    actions.push({
+  for (const c of report.open)
+    a({
       id: `conflict-${c.id}`,
       tone: "red",
       icon: "!",
@@ -1143,96 +1581,99 @@ export function nextActions(state: PrototypeState): NextAction[] {
         c.needs === "customer"
           ? `Sources disagree · ${c.scope}`
           : "Our own draft contradicts itself",
-      owner,
       due: "Due today",
-      button: c.needs === "customer" ? "Resolve" : "Fix",
-      target:
-        c.needs === "customer"
-          ? { view: "clarifications", questionId: c.questionId }
-          : { view: "checks" },
+      button: "Resolve",
+      target: { view: "checks" },
     });
-  }
   for (const q of state.questions.filter(
     (x) => x.revisions.length > x.reviewedRevision,
   ))
-    actions.push({
+    a({
       id: `review-${q.id}`,
       tone: "orange",
       icon: "↺",
       title: `Review customer answer: ${q.title}`,
-      subtitle: "A response is evidence; specialist approval is still required",
-      owner,
+      subtitle: "A reply is evidence; specialist approval is still required",
       due: "New reply",
       button: "Review",
-      target: { view: "clarifications", questionId: q.id },
+      target: { view: "checks" },
     });
-  for (const q of state.questions.filter((x) => x.status === "AI draft"))
-    actions.push({
-      id: `approve-${q.id}`,
+  const drafts = state.questions.filter((q) => q.status === "AI draft");
+  if (drafts.length)
+    a({
+      id: "approve-wording",
       tone: "blue",
       icon: "◎",
-      title: `Approve wording: ${q.title}`,
-      subtitle: `AI-drafted question for the ${q.recipientRole}`,
-      owner,
+      title: `Approve wording for ${drafts.length} drafted question${drafts.length === 1 ? "" : "s"}`,
+      subtitle: "AI-drafted; staff must approve before sending",
       due: "Before sending",
-      button: "Review",
-      target: { view: "clarifications", questionId: q.id },
+      button: "Open batch",
+      target: { view: "checks" },
     });
   for (const role of Object.keys(recipients)) {
     const ready = state.questions.filter(
       (q) => q.recipientRole === role && q.status === "Ready to send",
     );
     if (ready.length)
-      actions.push({
+      a({
         id: `send-${role}`,
         tone: "blue",
         icon: "↗",
         title: `Send ${ready.length} approved question${ready.length === 1 ? "" : "s"} to ${recipients[role].name}`,
         subtitle: role,
-        owner,
         due: "Ready",
         button: "Send",
-        target: { view: "clarifications", questionId: ready[0].id },
+        target: { view: "checks" },
       });
   }
-  for (const k of state.knowledge.filter((x) => x.status === "Needs review"))
-    actions.push({
-      id: `knowledge-${k.id}`,
-      tone: "blue",
-      icon: "◇",
-      title: `Review: ${k.title}`,
-      subtitle: "Source-backed candidate, not customer confirmed",
-      owner,
-      due: "Oct 31",
-      button: "Review",
-      target: { view: "knowledge", knowledgeId: k.id },
-    });
-  for (const s of sources.filter((x) => x.parse === "Needs attention"))
-    actions.push({
-      id: `source-${s.id}`,
+  const gaps = state.facts.filter(
+    (f) =>
+      coverageOf(f) === "empty" &&
+      !state.questions.some(
+        (q) => q.factIds.includes(f.id) && SENT.includes(q.status),
+      ),
+  );
+  for (const g of gaps)
+    a({
+      id: `gap-${g.id}`,
       tone: "green",
       icon: "▤",
-      title: `Get a readable copy: ${s.title}`,
-      subtitle: "The scan has no extractable text",
-      owner,
+      title: `Fill the gap: ${g.label}`,
+      subtitle: g.note ?? "Required fact has no value",
       due: "Nov 2",
-      button: "Open source",
-      target: { view: "sources", sourceId: s.id },
+      button: "Open fact",
+      target: { view: "requirements", factId: g.id },
+    });
+  const unreviewed = state.facts.filter(
+    (f) =>
+      f.value !== null &&
+      f.approval === "Not reviewed" &&
+      f.lifecycle !== "Needs clarification" &&
+      !f.waived,
+  );
+  if (unreviewed.length)
+    a({
+      id: "review-facts",
+      tone: "blue",
+      icon: "◇",
+      title: `Review ${unreviewed.length} extracted fact${unreviewed.length === 1 ? "" : "s"}`,
+      subtitle: "Source-backed drafts, not yet reviewed",
+      due: "Oct 31",
+      button: "Review",
+      target: { view: "requirements", factId: unreviewed[0].id },
     });
   if (readiness(state).ready) {
-    const waiting = testCases(state).filter((t) => {
-      const s = testStatus(state, t);
-      return s === "Not run" || s === "Needs retest" || s === "Fail";
-    });
+    const waiting = testCases(state).filter((t) =>
+      ["Not run", "Needs retest", "Fail"].includes(testStatus(state, t)),
+    );
     if (waiting.length)
-      actions.push({
+      a({
         id: "tests",
         tone: "orange",
         icon: "✓",
         title: `Record ${waiting.length} test result${waiting.length === 1 ? "" : "s"}`,
         subtitle:
-          "Run the scenarios against the configured agent, then record the outcome",
-        owner,
+          "Try each scenario against the configured agent, then record the outcome",
         due: "Before launch",
         button: "Open QA",
         target: { view: "qa" },
@@ -1241,25 +1682,22 @@ export function nextActions(state: PrototypeState): NextAction[] {
   return actions;
 }
 
+// ---------------------------------------------------------------------------------------------
+// Check-in text, process log, issues
+// ---------------------------------------------------------------------------------------------
+
 export function weeklyCheckIn(state: PrototypeState): string {
   const step = currentStep(state);
   const report = consistencyReport(state);
-  const status = readiness(state);
-  const done = [
-    `${sources.length} sources received and parsed (${sources.filter((s) => s.parse === "Needs attention").length} need a readable copy).`,
-    `${state.knowledge.filter(reviewed).length} of ${state.knowledge.length} knowledge items reviewed.`,
-    `${state.questions.filter((q) => q.status === "Resolved").length} customer questions resolved.`,
-    report.ran
-      ? `Consistency check run: ${report.conflicts.length} conflicts found, ${report.conflicts.filter((c) => c.resolved).length} resolved.`
-      : "Consistency check not yet run.",
-  ];
+  const cov = coverage(state);
   const needed = needsFromCustomer(state);
   const working = nextActions(state)
     .slice(0, 3)
     .map((a) => a.title);
+  const status = readiness(state);
   const risks = [
     ...status.blockers,
-    ...(status.stale ? ["The last setup package download is outdated."] : []),
+    ...status.risks,
     ...testCases(state)
       .filter((t) => testStatus(state, t) === "Fail")
       .map((t) => `Failing test ${t.id}`),
@@ -1267,10 +1705,8 @@ export function weeklyCheckIn(state: PrototypeState): string {
   return [
     "# Weekly check-in · Oakwood Property Group (fictional)",
     "",
-    `Progress: step ${step.n} of 5 — ${step.name}. ${step.detail}`,
-    "",
-    "## Done since the last check-in",
-    ...done.map((d) => `- ${d}`),
+    `Progress: step ${step.n} of 5, ${step.name}. ${step.detail}`,
+    `Coverage: ${cov.known} of ${cov.total} required facts known, ${cov.confirmed} confirmed by you, ${cov.clarifying} awaiting clarification, ${cov.empty} not received.`,
     "",
     "## Needed from you",
     ...(needed.length ? needed.map((n) => `- ${n}`) : ["- Nothing right now."]),
@@ -1283,231 +1719,213 @@ export function weeklyCheckIn(state: PrototypeState): string {
     "## Risks",
     ...(risks.length ? risks.map((r) => `- ${r}`) : ["- None open."]),
     "",
+    report.ran
+      ? `Consistency check: ${report.conflicts.length} conflicts found, ${report.conflicts.filter((c) => c.resolved).length} resolved.`
+      : "Consistency check not yet run.",
+    "",
   ].join("\n");
 }
 
-// ---------------------------------------------------------------------------------------------
-// Process log: repeated manual work is an automation candidate once it has happened three times
-// ---------------------------------------------------------------------------------------------
+export function slackUpdate(state: PrototypeState): string {
+  const step = currentStep(state);
+  const cov = coverage(state);
+  const needed = needsFromCustomer(state);
+  return [
+    `*Oakwood Property Group* — step ${step.n}/5 (${step.name})`,
+    `Coverage: ${cov.known}/${cov.total} known · ${cov.confirmed} confirmed · ${cov.empty} not received`,
+    needed.length
+      ? `Waiting on customer: ${needed.join("; ")}`
+      : "Waiting on customer: nothing",
+    `Next: ${nextActions(state)[0]?.title ?? "launch checklist"}`,
+  ].join("\n");
+}
 
+export const AUTOMATION_THRESHOLD = 3;
 export const processLog = [
   {
     id: "compare",
-    step: "Compare sources for contradictions",
-    count: 6,
+    label: "Compare sources for contradictions",
+    baseline: 6,
     automatedBy: "Consistency check",
+    live: null,
   },
   {
-    id: "questions",
-    step: "Turn gaps into customer questions",
-    count: 5,
-    automatedBy: "Clarification Center drafts",
+    id: "draft",
+    label: "Turn gaps into customer questions",
+    baseline: 5,
+    automatedBy: "Clarification drafts",
+    live: null,
   },
   {
     id: "recap",
-    step: "Write the weekly check-in recap",
-    count: 8,
-    automatedBy: "Weekly check-in draft",
+    label: "Write the weekly recap",
+    baseline: 8,
+    automatedBy: "Check-in draft",
+    live: null,
   },
   {
     id: "tests",
-    step: "Write test cases per scenario",
-    count: 4,
-    automatedBy: "QA center",
+    label: "Write test cases per scenario",
+    baseline: 4,
+    automatedBy: "QA generator",
+    live: null,
   },
   {
-    id: "creds",
-    step: "Copy integration credentials into a configuration",
-    count: 3,
+    id: "configure",
+    label: "Copy a confirmed fact into the agent configuration",
+    baseline: 2,
     automatedBy: null,
+    live: "configure",
+  },
+  {
+    id: "review-fact",
+    label: "Review an extracted fact against its source",
+    baseline: 1,
+    automatedBy: null,
+    live: "review-fact",
+  },
+  {
+    id: "record-test",
+    label: "Record a test result",
+    baseline: 0,
+    automatedBy: null,
+    live: "record-test",
   },
   {
     id: "roster",
-    step: "Re-key a roster spreadsheet into an escalation table",
-    count: 2,
+    label: "Re-key a roster spreadsheet",
+    baseline: 2,
     automatedBy: null,
+    live: null,
   },
 ] as const;
-export const AUTOMATION_THRESHOLD = 3;
-export const isAutomationCandidate = (count: number) =>
-  count >= AUTOMATION_THRESHOLD;
+export function processCounts(state: PrototypeState) {
+  return processLog.map((p) => {
+    const live = p.live ? (state.manualLog[p.live] ?? 0) : 0;
+    const total = p.baseline + live;
+    return {
+      ...p,
+      live,
+      total,
+      candidate: !p.automatedBy && total >= AUTOMATION_THRESHOLD,
+    };
+  });
+}
 
-// ---------------------------------------------------------------------------------------------
-// Setup package
-// ---------------------------------------------------------------------------------------------
+export const stageDays = [
+  { name: "Kickoff and goals", days: "2 days" },
+  { name: "Collect information", days: "4 days" },
+  { name: "Clarify and confirm", days: "in progress" },
+  { name: "Configure and test", days: "not started" },
+  { name: "Go live and tune", days: "not started" },
+];
 
-export function packageFiles(state: PrototypeState): Record<string, string> {
-  const status = readiness(state);
-  const eligible = state.knowledge.filter(reviewed);
-  const section = (heading: string, rows: Knowledge[]) =>
-    [
-      `# ${heading}`,
-      "",
-      "Fictional Oakwood customer · simulated prototype",
-      "",
-      ...rows.flatMap((k) => [
-        `## ${k.title}`,
-        "",
-        `Scope: ${k.scope} · Knowledge revision: ${state.knowledgeRevision}`,
-        "",
-        k.summary,
-        "",
-        ...(k.customerAnswer
-          ? [
-              `Customer-reviewed instruction (response revision ${k.customerAnswer.revision}): ${k.customerAnswer.value}`,
-              "",
-            ]
-          : []),
-        `Source: ${k.anchor}`,
-        "",
-      ]),
-      ...(rows.length
-        ? []
-        : ["No eligible reviewed information in this section.", ""]),
-    ].join("\n");
-  const cases = testCases(state);
-  const checklist = launchChecklist(state);
-  const files: Record<string, string> = {
-    "01-customer-overview.md": section(
-      "Customer overview",
-      eligible.filter((k) => k.category === "Goals"),
-    ),
-    "02-knowledge-base.md": section(
-      "Knowledge base",
-      eligible.filter((k) => k.category === "FAQs & Policies"),
-    ),
-    "03-team-and-routing.md": section(
-      "Team and routing",
-      eligible.filter((k) => k.category === "Team & Routing"),
-    ),
-    "04-scenario-handling.md": section(
-      "Scenario handling",
-      eligible.filter((k) => k.category === "Handling Scenarios"),
-    ),
-    "05-integration-readiness.md": section(
-      "Integration readiness",
-      eligible.filter((k) => k.category === "Integrations"),
-    ),
-    "06-test-plan.md": [
-      "# Test plan",
-      "",
-      "Nothing in this prototype runs a test. Results are recorded by a person after trying each scenario.",
-      "",
-      ...cases.flatMap((t) => [
-        `## ${t.id} · ${t.kind}${t.critical ? " · critical" : ""}`,
-        `- Scenario: ${t.scenario}`,
-        `- Expected: ${t.expected}`,
-        `- Result: ${testStatus(state, t)}${state.tests[t.id]?.note ? ` — ${state.tests[t.id].note}` : ""}`,
-        "",
-      ]),
-      ...(cases.length ? [] : ["No reviewed knowledge to test yet.", ""]),
-    ].join("\n"),
-    "07-open-items.md": [
-      "# Open items and blockers",
-      "",
-      `Package status: ${status.ready ? "Ready for configuration preparation" : "DRAFT — preparation incomplete"}`,
-      "",
-      ...status.blockers.map((b) => `- Critical · Avery Morgan · ${b}`),
-      "- Downstream dependency · PMS connection and credentials belong to the target platform's approved setup process; none are stored here.",
-      "- Unsupported scan · request a text-based move-in checklist.",
-      "",
-    ].join("\n"),
-    "08-launch-checklist.md": [
-      "# Launch checklist",
-      "",
-      ...checklist.map(
-        (c) => `- [${c.pass ? "x" : " "}] ${c.label} — ${c.detail}`,
-      ),
-      "",
-    ].join("\n"),
+export const seedIssues: Issue[] = [
+  {
+    id: "i1",
+    text: "A caller asked about guest parking and the agent guessed.",
+    factId: "F1",
+    expected: "Says the team will follow up; does not guess.",
+  },
+  {
+    id: "i2",
+    text: "An after-hours caller was not offered a callback number.",
+    factId: "T3",
+    expected: "Offers a callback number when the supervisor is unavailable.",
+  },
+  {
+    id: "i3",
+    text: "A lookup timed out and the agent never reported back.",
+    factId: "I1",
+    expected: "Takes a message when the lookup is unavailable.",
+  },
+];
+export function convertIssue(
+  state: PrototypeState,
+  id: string,
+): PrototypeState {
+  const issue = seedIssues.find((i) => i.id === id);
+  if (!issue || state.extraTests.some((t) => t.id === `T-${id}`)) return state;
+  return {
+    ...state,
+    extraTests: [
+      ...state.extraTests,
+      {
+        id: `T-${id}`,
+        factId: issue.factId,
+        kind: "From issue",
+        scenario: issue.text,
+        expected: issue.expected,
+        critical: false,
+      },
+    ],
   };
-  files["manifest.json"] =
+}
+
+// ---------------------------------------------------------------------------------------------
+// Export: plain rows for a table tool (for example Coda) and a JSON bundle
+// ---------------------------------------------------------------------------------------------
+
+const cell = (v: unknown) => {
+  const s = String(v ?? "");
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
+
+export function exportRows(state: PrototypeState) {
+  const cases = testCases(state);
+  return state.facts.map((f) => {
+    const mine = cases.filter((t) => t.factId === f.id);
+    return {
+      fact_id: f.id,
+      area: f.area,
+      fact: f.label,
+      value: shownValue(f) ?? "",
+      status: shownLifecycle(state, f),
+      approval: f.approval,
+      owner: f.owner,
+      source: f.sourceId
+        ? (allSources(state).find((s) => s.id === f.sourceId)?.title ??
+          f.sourceId)
+        : "",
+      citation: f.anchor,
+      critical: f.critical ? "yes" : "no",
+      waived: f.waived?.reason ?? "",
+      tests_passing: mine.filter((t) => testStatus(state, t) === "Pass").length,
+      tests_total: mine.length,
+    };
+  });
+}
+
+export function exportCsv(state: PrototypeState): string {
+  const rows = exportRows(state);
+  const head = Object.keys(rows[0]);
+  return (
+    [
+      head.join(","),
+      ...rows.map((r) =>
+        head.map((h) => cell((r as Record<string, unknown>)[h])).join(","),
+      ),
+    ].join("\n") + "\n"
+  );
+}
+
+export function exportJson(state: PrototypeState): string {
+  return (
     JSON.stringify(
       {
-        templateVersion: "prototype-2",
-        project: "Fictional Oakwood Property Group",
-        snapshotRevision: state.knowledgeRevision,
-        status: status.ready ? "ready_for_configuration_preparation" : "draft",
-        knowledgeIds: eligible.map((k) => k.id),
-        blockers: status.blockers,
-        openConflicts: status.openConflicts,
-        launchChecklist: {
-          passed: checklist.filter((c) => c.pass).length,
-          total: checklist.length,
-        },
-        tests: {
-          total: cases.length,
-          pass: cases.filter((t) => testStatus(state, t) === "Pass").length,
-        },
+        customer: "Fictional Oakwood Property Group",
         simulated: true,
+        step: currentStep(state).n,
+        coverage: coverage(state),
+        facts: exportRows(state),
+        process: processCounts(state).map((p) => ({
+          step: p.label,
+          count: p.total,
+          automation_candidate: p.candidate,
+        })),
       },
       null,
       2,
-    ) + "\n";
-  return files;
-}
-
-export function zipFiles(files: Record<string, string>): Uint8Array {
-  const encoder = new TextEncoder();
-  const chunks: Uint8Array[] = [];
-  const central: Uint8Array[] = [];
-  let offset = 0;
-  const u16 = (view: DataView, at: number, value: number) =>
-    view.setUint16(at, value, true);
-  const u32 = (view: DataView, at: number, value: number) =>
-    view.setUint32(at, value >>> 0, true);
-  const crc = (bytes: Uint8Array) => {
-    let c = -1;
-    for (const b of bytes) {
-      c ^= b;
-      for (let i = 0; i < 8; i++) c = (c >>> 1) ^ (-(c & 1) & 0xedb88320);
-    }
-    return (c ^ -1) >>> 0;
-  };
-  for (const [name, content] of Object.entries(files)) {
-    const title = encoder.encode(name);
-    const data = encoder.encode(content);
-    const checksum = crc(data);
-    const local = new Uint8Array(30 + title.length);
-    const l = new DataView(local.buffer);
-    u32(l, 0, 0x04034b50);
-    u16(l, 4, 20);
-    u16(l, 6, 0);
-    u16(l, 8, 0);
-    u32(l, 14, checksum);
-    u32(l, 18, data.length);
-    u32(l, 22, data.length);
-    u16(l, 26, title.length);
-    local.set(title, 30);
-    const entry = new Uint8Array(46 + title.length);
-    const e = new DataView(entry.buffer);
-    u32(e, 0, 0x02014b50);
-    u16(e, 4, 20);
-    u16(e, 6, 20);
-    u32(e, 16, checksum);
-    u32(e, 20, data.length);
-    u32(e, 24, data.length);
-    u16(e, 28, title.length);
-    u32(e, 42, offset);
-    entry.set(title, 46);
-    chunks.push(local, data);
-    central.push(entry);
-    offset += local.length + data.length;
-  }
-  const centralSize = central.reduce((sum, b) => sum + b.length, 0);
-  const footer = new Uint8Array(22);
-  const f = new DataView(footer.buffer);
-  u32(f, 0, 0x06054b50);
-  u16(f, 8, central.length);
-  u16(f, 10, central.length);
-  u32(f, 12, centralSize);
-  u32(f, 16, offset);
-  const total = offset + centralSize + footer.length;
-  const result = new Uint8Array(total);
-  let cursor = 0;
-  for (const chunk of [...chunks, ...central, footer]) {
-    result.set(chunk, cursor);
-    cursor += chunk.length;
-  }
-  return result;
+    ) + "\n"
+  );
 }

@@ -13,7 +13,7 @@ test(
     assert.equal(page.status, 200);
     const html = await page.text();
     assert.match(html, /Super Onboard/);
-    assert.match(html, /Customer projects/);
+    assert.match(html, /Oakwood Property Group/);
     assert.match(html, /Simulated prototype/);
     if (process.env.BACKEND_RUNNING === "1") {
       const privateResponse = await fetch(`${url}/api/projects`);

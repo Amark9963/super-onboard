@@ -1,120 +1,156 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   AUTOMATION_THRESHOLD,
-  categories,
+  addSource,
+  allSources,
+  applyDefault,
+  areas,
   claims,
   consistencyReport,
+  convertIssue,
+  coverage,
+  coverageOf,
   currentStep,
+  exportCsv,
+  exportJson,
   initialState,
-  isAutomationCandidate,
+  isConfirmed,
+  lateSource,
   launchChecklist,
+  markConfigured,
   needsFromCustomer,
   nextActions,
   onboardingSteps,
-  packageFiles,
-  processLog,
+  processCounts,
+  questionCritical,
   readiness,
   recipients,
   recordTest,
+  reopenQuestion,
   resolveInternally,
   reviewAnswer,
+  reviewFact,
   runConsistencyCheck,
+  seedIssues,
   sendRequest,
   sentQuestionIds,
-  sources,
+  shownLifecycle,
+  shownValue,
+  slackUpdate,
+  stageDays,
   submitAnswer,
   testCases,
   testStatus,
   updateQuestion,
+  configurable,
+  waiveFact,
   weeklyCheckIn,
-  zipFiles,
-  type Category,
+  type Fact,
+  type NextAction,
   type PrototypeState,
+  type Question,
 } from "./state";
 
-type View =
-  | "projects"
-  | "overview"
-  | "sources"
-  | "knowledge"
-  | "clarifications"
-  | "package"
-  | "actions"
-  | "checks"
-  | "qa"
-  | "portal";
+type View = "home" | "requirements" | "checks" | "qa" | "process" | "portal";
 const views: View[] = [
-  "projects",
-  "overview",
-  "sources",
-  "knowledge",
-  "clarifications",
-  "package",
-  "actions",
+  "home",
+  "requirements",
   "checks",
   "qa",
+  "process",
   "portal",
 ];
 const nav: { view: View; label: string; icon: string }[] = [
-  { view: "overview", label: "Overview", icon: "◫" },
-  { view: "sources", label: "Sources", icon: "▤" },
-  { view: "knowledge", label: "Knowledge", icon: "◇" },
-  { view: "checks", label: "Consistency", icon: "◈" },
-  { view: "clarifications", label: "Clarifications", icon: "◎" },
+  { view: "home", label: "Onboarding", icon: "◫" },
+  { view: "requirements", label: "Requirements", icon: "◇" },
+  { view: "checks", label: "Checks", icon: "◈" },
   { view: "qa", label: "QA & Launch", icon: "✓" },
-  { view: "package", label: "Setup Package", icon: "▣" },
+  { view: "process", label: "Process", icon: "↻" },
 ];
-const short = (value: string) => value.replace(" & ", " + ");
+
+const tone = (s: string) =>
+  [
+    "Customer confirmed",
+    "Customer approved",
+    "Configured",
+    "Tested",
+    "Pass",
+    "Resolved",
+  ].includes(s)
+    ? "green"
+    : ["Needs clarification", "Needs retest", "Defaulted"].includes(s)
+      ? "amber"
+      : ["Not received", "Fail"].includes(s)
+        ? "red"
+        : ["Not reviewed", "Not run"].includes(s)
+          ? "gray"
+          : "blue";
+
+function download(name: string, text: string, type: string) {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function friendly(a: NextAction): string {
+  if (a.id === "run-check")
+    return "Comparing the information you sent for contradictions";
+  if (a.id.startsWith("conflict-"))
+    return `Clarifying: ${a.title.replace(/^[^:]+: /, "")}`;
+  if (a.id.startsWith("review-") && a.id !== "review-facts")
+    return `Reviewing your answer: ${a.title.replace(/^[^:]+: /, "")}`;
+  if (a.id === "approve-wording" || a.id.startsWith("send-"))
+    return "Preparing questions for you";
+  if (a.id.startsWith("gap-"))
+    return `Chasing missing information: ${a.title.replace(/^[^:]+: /, "")}`;
+  if (a.id === "review-facts")
+    return "Reviewing what we extracted from your documents";
+  if (a.id === "tests") return "Testing the agent against your scenarios";
+  return a.title;
+}
 
 export default function Prototype() {
-  const [view, setView] = useState<View>("projects");
+  const [view, setView] = useState<View>("home");
   const [state, setState] = useState<PrototypeState>(initialState);
-  const [category, setCategory] = useState<Category>("Goals");
-  const [selectedKnowledge, setSelectedKnowledge] = useState("goal");
-  const [selectedSource, setSelectedSource] = useState("sop");
-  const [selectedQuestion, setSelectedQuestion] = useState("q-emergency");
-  const [selectedQuestions, setSelectedQuestions] = useState<string[]>([
-    "q-emergency",
-    "q-integration",
-    "q-pets",
-  ]);
-  const [fixChoice, setFixChoice] = useState<Record<string, string>>({});
-  const [fixNote, setFixNote] = useState<Record<string, string>>({});
-  const [testNotes, setTestNotes] = useState<Record<string, string>>({});
-  const [checkIn, setCheckIn] = useState("");
-  const [sourceChooser, setSourceChooser] = useState(false);
-  const [sourceMethod, setSourceMethod] = useState("Upload files");
-  const [sourceTitle, setSourceTitle] = useState("");
-  const [localSources, setLocalSources] = useState<string[]>([]);
-  const [sourceNote, setSourceNote] = useState("");
-  const [portalAnswers, setPortalAnswers] = useState<Record<string, string>>(
-    {},
-  );
-  const [portalKinds, setPortalKinds] = useState<
-    Record<string, "answer" | "unknown" | "delegate">
-  >({});
-  const [portalComments, setPortalComments] = useState<Record<string, string>>(
-    {},
-  );
+  const [audience, setAudience] = useState<"team" | "customer">("team");
+  const [focusFact, setFocusFact] = useState("");
+  const [portalRole, setPortalRole] = useState("Operations lead");
+  const [choice, setChoice] = useState<Record<string, string>>({});
+  const [detail, setDetail] = useState<Record<string, string>>({});
   const [portalReview, setPortalReview] = useState(false);
   const [receipt, setReceipt] = useState("");
-  const [packageSection, setPackageSection] = useState(
-    "01-customer-overview.md",
-  );
+  const [fixChoice, setFixChoice] = useState<Record<string, string>>({});
+  const [fixNote, setFixNote] = useState<Record<string, string>>({});
+  const [waiveNote, setWaiveNote] = useState<Record<string, string>>({});
+  const [testNotes, setTestNotes] = useState<Record<string, string>>({});
+  const [output, setOutput] = useState("");
   const [toast, setToast] = useState("");
   const [mobileMenu, setMobileMenu] = useState(false);
 
   useEffect(() => {
     const readHash = () => {
       const route = window.location.hash.slice(1) as View;
-      if (views.includes(route)) setView(route);
+      if (views.includes(route)) {
+        setView(route);
+        setToast("");
+      }
     };
     readHash();
     window.addEventListener("hashchange", readHash);
     return () => window.removeEventListener("hashchange", readHash);
   }, []);
+  useEffect(() => {
+    if (view === "requirements" && focusFact)
+      document
+        .getElementById(`fact-${focusFact}`)
+        ?.scrollIntoView({ block: "center" });
+  }, [view, focusFact]);
+
   const go = (next: View) => {
     setView(next);
     window.history.replaceState(null, "", `#${next}`);
@@ -122,114 +158,70 @@ export default function Prototype() {
     setToast("");
   };
   const flash = (message: string) => setToast(message);
+  const update = (fn: (s: PrototypeState) => PrototypeState) => setState(fn);
+
   const status = readiness(state);
-  const files = useMemo(() => packageFiles(state), [state]);
-  const activeQuestion =
-    state.questions.find((q) => q.id === selectedQuestion) ||
-    state.questions[0];
-  const activeKnowledge =
-    state.knowledge.find((k) => k.id === selectedKnowledge) ||
-    state.knowledge[0];
-  const activeSource =
-    sources.find((s) => s.id === selectedSource) || sources[0];
-  const [portalRole, setPortalRole] = useState("Operations lead");
+  const report = consistencyReport(state);
+  const cov = coverage(state);
+  const steps = onboardingSteps(state);
+  const step = currentStep(state);
+  const actions = nextActions(state);
+  const checklist = launchChecklist(state);
+  const cases = testCases(state);
   const sentIds = sentQuestionIds(state);
-  const anySent = sentIds.length > 0;
-  const sentQuestions = state.questions.filter(
-    (q) => q.recipientRole === portalRole && sentIds.includes(q.id),
-  );
   const sentRoles = Object.keys(recipients).filter((r) =>
     state.questions.some(
       (q) => q.recipientRole === r && sentIds.includes(q.id),
     ),
   );
-  const report = consistencyReport(state);
-  const checklist = launchChecklist(state);
-  const cases = testCases(state);
-  const actions = nextActions(state);
-  const step = currentStep(state);
-  const steps = onboardingSteps(state);
-  const goTarget = (t: (typeof actions)[number]["target"]) => {
-    if (t.questionId) setSelectedQuestion(t.questionId);
-    if (t.sourceId) setSelectedSource(t.sourceId);
-    if (t.knowledgeId) return openKnowledge(t.knowledgeId);
-    go(t.view as View);
-  };
-  const reviewedCount = state.knowledge.filter((k) =>
-    ["Internally reviewed", "Customer confirmed"].includes(k.status),
-  ).length;
+  const sentQuestions = state.questions.filter(
+    (q) => q.recipientRole === portalRole && sentIds.includes(q.id),
+  );
 
-  function openCategory(next: Category) {
-    setCategory(next);
-    setSelectedKnowledge(
-      state.knowledge.find((k) => k.category === next)?.id || "goal",
-    );
-    go("knowledge");
-  }
-  function openKnowledge(id: string) {
-    const item = state.knowledge.find((k) => k.id === id);
-    if (item) {
-      setCategory(item.category);
-      setSelectedKnowledge(id);
-      go("knowledge");
-    }
-  }
-  function toggleSelected(id: string) {
-    setSelectedQuestions((current) =>
-      current.includes(id) ? current.filter((x) => x !== id) : [...current, id],
-    );
+  const goTarget = (t: NextAction["target"]) => {
+    if (t.factId) setFocusFact(t.factId);
+    go(t.view);
+  };
+
+  function composed(q: Question) {
+    const c = choice[q.id];
+    const text = (detail[q.id] || "").trim();
+    if (!c) return text;
+    const opt = c.startsWith("opt:") ? q.options[Number(c.slice(4))] : "";
+    if (!opt) return "";
+    return opt.startsWith("Something else")
+      ? text
+      : text
+        ? `${opt} — ${text}`
+        : opt;
   }
   function submitPortal() {
     const entries = sentQuestions.filter(
-      (q) => portalKinds[q.id] || portalAnswers[q.id]?.trim(),
+      (q) => choice[q.id] || detail[q.id]?.trim(),
     );
     if (!entries.length) {
       flash(
-        "Choose an answer, I don't know, or someone else should answer for at least one question.",
+        "Pick an answer, “I don’t know”, or “Someone else should answer” for at least one question.",
       );
       return;
     }
     let next = state;
-    for (const q of entries)
-      next = submitAnswer(
-        next,
-        q.id,
-        portalAnswers[q.id] || "",
-        portalKinds[q.id] || "answer",
-        portalComments[q.id] || "",
-      );
+    for (const q of entries) {
+      const c = choice[q.id];
+      const kind =
+        c === "unknown" ? "unknown" : c === "delegate" ? "delegate" : "answer";
+      next = submitAnswer(next, q.id, composed(q), kind, "");
+    }
     setState(next);
     setPortalReview(false);
     setReceipt(
-      `${entries.length} answer${entries.length === 1 ? "" : "s"} recorded in this simulated session. Your prior versions remain visible below.`,
+      `${entries.length} answer${entries.length === 1 ? "" : "s"} recorded in this simulated session. Prior versions stay visible below.`,
     );
-    setPortalAnswers({});
-    setPortalKinds({});
-    setPortalComments({});
-  }
-  function saveDraft() {
-    flash(
-      "Draft kept in this browser session only. No server or email is involved.",
-    );
-  }
-  function downloadZip() {
-    const bytes = zipFiles(files);
-    const blob = new Blob([new Uint8Array(bytes)], { type: "application/zip" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `oakwood-setup-package-prototype-r${state.knowledgeRevision}.zip`;
-    link.click();
-    URL.revokeObjectURL(url);
-    setState((current) => ({
-      ...current,
-      packageSnapshot: current.knowledgeRevision,
-    }));
-    flash(
-      "Deterministic prototype ZIP downloaded. No package was stored on a server.",
-    );
+    setChoice({});
+    setDetail({});
   }
 
+  // ------------------------------------------------------------------ customer answer form
   if (view === "portal")
     return (
       <div className="v2-portal">
@@ -237,31 +229,29 @@ export default function Prototype() {
           <div className="v2-brandmark">
             so<span>.</span>
           </div>
-          <span>Fictional customer review · simulated</span>
+          <span>Fictional customer view · simulated</span>
         </header>
         <main className="v2-portal-main">
-          <button className="v2-link" onClick={() => go("clarifications")}>
-            ← Return to specialist preview
+          <button className="v2-link" onClick={() => go("checks")}>
+            ← Return to specialist view
           </button>
-          {!anySent ? (
+          {sentIds.length === 0 ? (
             <div className="v2-empty">
-              <h1>No review request in this demo yet.</h1>
+              <h1>No questions have been sent yet.</h1>
               <p>
-                Approve draft questions and simulate sending a grouped request
-                from the Clarification Center.
+                Approve and send a clarification batch from the Checks screen
+                first.
               </p>
-              <button onClick={() => go("clarifications")}>
-                Open Clarification Center
-              </button>
+              <button onClick={() => go("checks")}>Open Checks</button>
             </div>
           ) : (
             <>
               <p className="v2-eyebrow">OAKWOOD PROPERTY GROUP · FICTIONAL</p>
               <h1>Help us get your agent setup details right.</h1>
               <p className="v2-lede">
-                Avery from the implementation team has a few questions about
-                your operating instructions. Answer what you can; you can come
-                back and revise while this simulated review is open.
+                Avery from the implementation team has a few questions. Choose
+                the closest answer or write your own; you can revise while this
+                simulated review is open.
               </p>
               <div className="v2-portal-intro">
                 <span>
@@ -286,38 +276,11 @@ export default function Prototype() {
                   ))}
                 </div>
               )}
-              <section
-                className="v2-panel v2-tracker"
-                aria-label="Onboarding progress"
-              >
-                <p className="v2-eyebrow">
-                  STEP {step.n} OF {steps.length} · {step.name.toUpperCase()}
-                </p>
-                <ol className="v2-steps">
-                  {steps.map((s) => (
-                    <li key={s.n} className={s.status.toLowerCase()}>
-                      <b>{s.status === "Done" ? "✓" : s.n}</b>
-                      <span>
-                        {s.name}
-                        <small>{s.detail}</small>
-                      </span>
-                    </li>
-                  ))}
-                </ol>
-                <strong>What we need from you to unblock</strong>
-                {needsFromCustomer(state, portalRole).length ? (
-                  <ul>
-                    {needsFromCustomer(state, portalRole).map((n) => (
-                      <li key={n}>{n}</li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="v2-muted">
-                    Nothing outstanding from you right now. We are reviewing
-                    your answers.
-                  </p>
-                )}
-              </section>
+              <StepTracker
+                state={state}
+                audience="customer"
+                role={portalRole}
+              />
               {receipt && (
                 <div className="v2-success" role="status">
                   {receipt}
@@ -328,18 +291,16 @@ export default function Prototype() {
                   <p className="v2-eyebrow">REVIEW ANSWERS</p>
                   <h2>Check before submitting</h2>
                   {sentQuestions
-                    .filter(
-                      (q) => portalKinds[q.id] || portalAnswers[q.id]?.trim(),
-                    )
+                    .filter((q) => choice[q.id] || detail[q.id]?.trim())
                     .map((q) => (
                       <div className="v2-summary-row" key={q.id}>
                         <strong>{q.title}</strong>
                         <p>
-                          {portalKinds[q.id] === "unknown"
-                            ? "I don't know"
-                            : portalKinds[q.id] === "delegate"
+                          {choice[q.id] === "unknown"
+                            ? "I don’t know"
+                            : choice[q.id] === "delegate"
                               ? "Someone else should answer"
-                              : portalAnswers[q.id]}
+                              : composed(q)}
                         </p>
                       </div>
                     ))}
@@ -374,64 +335,37 @@ export default function Prototype() {
                         Context shared with you: {q.source}. No full source
                         document is included.
                       </p>
-                      <label className="v2-field">
-                        Your answer
-                        <textarea
-                          value={portalAnswers[q.id] || ""}
-                          onChange={(event) => {
-                            setPortalAnswers({
-                              ...portalAnswers,
-                              [q.id]: event.target.value,
-                            });
-                            setPortalKinds({
-                              ...portalKinds,
-                              [q.id]: "answer",
-                            });
-                          }}
-                          placeholder="Write the policy or next step in your own words"
-                        />
-                      </label>
-                      <div className="v2-choices">
-                        <label>
-                          <input
-                            type="radio"
-                            name={`kind-${q.id}`}
-                            checked={portalKinds[q.id] === "unknown"}
-                            onChange={() =>
-                              setPortalKinds({
-                                ...portalKinds,
-                                [q.id]: "unknown",
-                              })
-                            }
-                          />{" "}
-                          I don&apos;t know
-                        </label>
-                        <label>
-                          <input
-                            type="radio"
-                            name={`kind-${q.id}`}
-                            checked={portalKinds[q.id] === "delegate"}
-                            onChange={() =>
-                              setPortalKinds({
-                                ...portalKinds,
-                                [q.id]: "delegate",
-                              })
-                            }
-                          />{" "}
-                          Someone else should answer
-                        </label>
+                      <div
+                        className="v2-options"
+                        role="radiogroup"
+                        aria-label={q.title}
+                      >
+                        {[
+                          ...q.options.map((o, i) => [`opt:${i}`, o] as const),
+                          ["unknown", "I don’t know"] as const,
+                          ["delegate", "Someone else should answer"] as const,
+                        ].map(([value, label]) => (
+                          <label key={value}>
+                            <input
+                              type="radio"
+                              name={`choice-${q.id}`}
+                              checked={choice[q.id] === value}
+                              onChange={() =>
+                                setChoice({ ...choice, [q.id]: value })
+                              }
+                            />{" "}
+                            {label}
+                          </label>
+                        ))}
                       </div>
                       <label className="v2-field">
-                        Optional comment
-                        <input
-                          value={portalComments[q.id] || ""}
-                          onChange={(event) =>
-                            setPortalComments({
-                              ...portalComments,
-                              [q.id]: event.target.value,
-                            })
+                        Add detail (optional)
+                        <textarea
+                          value={detail[q.id] || ""}
+                          onChange={(e) =>
+                            setDetail({ ...detail, [q.id]: e.target.value })
                           }
-                          placeholder="Add context for the implementation team"
+                          placeholder="Write the policy or next step in your own words"
                         />
                       </label>
                       {q.revisions.length > 0 && (
@@ -444,10 +378,9 @@ export default function Prototype() {
                                 {r.kind === "answer"
                                   ? r.value
                                   : r.kind === "unknown"
-                                    ? "I don't know"
+                                    ? "I don’t know"
                                     : "Someone else should answer"}
                               </p>
-                              {r.comment && <p>Comment: {r.comment}</p>}
                             </div>
                           ))}
                         </details>
@@ -456,17 +389,11 @@ export default function Prototype() {
                   ))}
                   <div className="v2-portal-footer">
                     <p>
-                      Your name and role are self-declared in the real workflow.
-                      A review link does not verify identity or provide legal
+                      Your name and role are self-declared in a real workflow. A
+                      review link does not verify identity or provide legal
                       authorization.
                     </p>
                     <div className="v2-actions">
-                      <button
-                        className="v2-button secondary"
-                        onClick={saveDraft}
-                      >
-                        Save draft locally
-                      </button>
                       <button
                         className="v2-button"
                         onClick={() => setPortalReview(true)}
@@ -483,6 +410,7 @@ export default function Prototype() {
       </div>
     );
 
+  // ------------------------------------------------------------------ specialist workspace
   return (
     <div className="v2-app">
       <aside className={`v2-sidebar ${mobileMenu ? "open" : ""}`}>
@@ -492,22 +420,9 @@ export default function Prototype() {
           </div>
           <div>
             <strong>super onboard</strong>
-            <small>PREPARATION WORKSPACE</small>
+            <small>ONBOARDING PROCESS</small>
           </div>
         </div>
-        <div className="v2-side-section">WORKSPACE</div>
-        <button
-          className={`v2-side-link ${view === "projects" ? "active" : ""}`}
-          onClick={() => go("projects")}
-        >
-          <span>▦</span> Projects
-        </button>
-        <button
-          className={`v2-side-link ${view === "actions" ? "active" : ""}`}
-          onClick={() => go("actions")}
-        >
-          <span>☷</span> My Actions <b>{actions.length}</b>
-        </button>
         <div className="v2-side-section customer">OAKWOOD PROPERTY GROUP</div>
         {nav.map((item) => (
           <button
@@ -516,6 +431,9 @@ export default function Prototype() {
             onClick={() => go(item.view)}
           >
             <span>{item.icon}</span> {item.label}
+            {item.view === "home" && actions.length > 0 && (
+              <b>{actions.length}</b>
+            )}
           </button>
         ))}
         <div className="v2-sidebar-bottom">
@@ -524,7 +442,6 @@ export default function Prototype() {
             <strong>Avery Morgan</strong>
             <small>Implementation specialist</small>
           </div>
-          <span className="v2-more">···</span>
         </div>
       </aside>
       <div className="v2-main-wrap">
@@ -537,23 +454,13 @@ export default function Prototype() {
             ☰
           </button>
           <div className="v2-breadcrumb">
-            <button onClick={() => go("projects")}>Projects</button>
+            <span>Oakwood Property Group</span>
             <span>/</span>
-            <button onClick={() => go("overview")}>
-              Oakwood Property Group
-            </button>
-            <span>/</span>
-            <strong>
-              {view === "actions"
-                ? "My Actions"
-                : view === "projects"
-                  ? "Projects"
-                  : nav.find((n) => n.view === view)?.label}
-            </strong>
+            <strong>{nav.find((n) => n.view === view)?.label}</strong>
           </div>
           <div className="v2-top-meta">
-            <span className="v2-live-dot" /> Simulated prototype{" "}
-            <span className="v2-top-avatar">AM</span>
+            <span className="v2-live-dot" /> Simulated prototype · fictional
+            data
           </div>
         </header>
         <main className="v2-content">
@@ -565,957 +472,425 @@ export default function Prototype() {
               </button>
             </div>
           )}
-          {view === "projects" && (
-            <>
-              <div className="v2-page-head">
-                <div>
-                  <p className="v2-eyebrow">YOUR WORKSPACE</p>
-                  <h1>Customer projects</h1>
-                  <p>
-                    See what needs attention across onboarding preparations.
-                  </p>
-                </div>
-                <button
-                  className="v2-button"
-                  onClick={() =>
-                    flash(
-                      "New project creation is simulated in this frontend prototype.",
-                    )
-                  }
-                >
-                  ＋ New onboarding project
-                </button>
-              </div>
-              <div
-                className="v2-project-card"
-                onClick={() => go("overview")}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => e.key === "Enter" && go("overview")}
-              >
-                <div className="v2-project-logo">O</div>
-                <div className="v2-project-main">
-                  <p className="v2-eyebrow">
-                    RESIDENTIAL PROPERTY MANAGEMENT · FICTIONAL
-                  </p>
-                  <h2>Oakwood Property Group</h2>
-                  <p>Inbound resident assistant · Maple Grove + Willow Court</p>
-                  <div className="v2-project-meta">
-                    <span>Avery Morgan · Owner</span>
-                    <span>Last activity Oct 28</span>
-                    <span>
-                      {
-                        state.questions.filter((q) => q.status !== "Resolved")
-                          .length
-                      }{" "}
-                      open questions
-                    </span>
-                  </div>
-                </div>
-                <div className="v2-project-right">
-                  <span className="v2-status amber">
-                    {status.ready
-                      ? "Ready for preparation"
-                      : "Preparation incomplete"}
-                  </span>
-                  <strong>{status.critical} critical blockers</strong>
-                  <span className="v2-link">Open project →</span>
-                </div>
-              </div>
-            </>
-          )}
-          {view === "overview" && (
+
+          {view === "home" && (
             <>
               <div className="v2-hero">
                 <div>
-                  <p className="v2-eyebrow">CUSTOMER OVERVIEW · FICTIONAL</p>
+                  <p className="v2-eyebrow">
+                    ONE ONBOARDING · KICKOFF TO GO-LIVE
+                  </p>
                   <h1>Oakwood Property Group</h1>
                   <p>
-                    An inbound resident assistant that handles common questions
-                    and routes urgent issues to the right human team.
+                    Step {step.n} of {steps.length}: {step.name}. {step.detail}
                   </p>
-                  <div className="v2-hero-meta">
-                    <span>
-                      Owner <strong>Avery Morgan</strong>
-                    </span>
-                    <span>
-                      Scope <strong>2 properties</strong>
-                    </span>
-                    <span>
-                      Stage{" "}
-                      <strong>
-                        {status.ready
-                          ? "Ready for configuration preparation"
-                          : "Knowledge review"}
-                      </strong>
-                    </span>
-                  </div>
                 </div>
-                <button
-                  className="v2-button light"
-                  onClick={() => {
-                    setSourceChooser(true);
-                    go("sources");
-                  }}
-                >
-                  ＋ Add customer information
-                </button>
-              </div>
-              <div className="v2-metrics">
-                <div>
-                  <strong>{sources.length + localSources.length}</strong>
-                  <span>Sources received</span>
-                </div>
-                <div>
-                  <strong>{state.knowledge.length - reviewedCount}</strong>
-                  <span>Items needing review</span>
-                </div>
-                <div>
-                  <strong>
-                    {
-                      state.questions.filter(
-                        (q) =>
-                          q.status === "Sent" ||
-                          q.status === "Response received",
-                      ).length
-                    }
-                  </strong>
-                  <span>Customer questions waiting</span>
-                </div>
-                <div>
-                  <strong>{status.critical}</strong>
-                  <span>Critical information blockers</span>
+                <div className="v2-toggle" role="group" aria-label="Audience">
+                  <button
+                    className={audience === "team" ? "selected" : ""}
+                    onClick={() => setAudience("team")}
+                  >
+                    Team view
+                  </button>
+                  <button
+                    className={audience === "customer" ? "selected" : ""}
+                    onClick={() => setAudience("customer")}
+                  >
+                    Customer view
+                  </button>
                 </div>
               </div>
-              <div className="v2-overview-grid">
-                <section className="v2-panel v2-priority">
-                  <div className="v2-section-head">
+              {audience === "team" ? (
+                <>
+                  <div className="v2-metrics">
                     <div>
-                      <p className="v2-eyebrow">PRIORITIZED FOR YOU</p>
-                      <h2>Next actions</h2>
+                      <strong>
+                        {cov.known}/{cov.total}
+                      </strong>
+                      <span>Required facts known</span>
                     </div>
-                    <button className="v2-link" onClick={() => go("actions")}>
-                      View all →
-                    </button>
+                    <div>
+                      <strong>{cov.confirmed}</strong>
+                      <span>Confirmed by the customer</span>
+                    </div>
+                    <div>
+                      <strong>{cov.clarifying}</strong>
+                      <span>Awaiting clarification</span>
+                    </div>
+                    <div>
+                      <strong>{cov.empty}</strong>
+                      <span>Not received</span>
+                    </div>
                   </div>
-                  {actions.slice(0, 4).map((a) => (
-                    <Action
-                      key={a.id}
-                      icon={a.icon}
-                      tone={a.tone}
-                      title={a.title}
-                      subtitle={a.subtitle}
-                      owner={a.owner}
-                      due={a.due}
-                      button={a.button}
-                      onClick={() => goTarget(a.target)}
-                    />
-                  ))}
-                  {!actions.length && (
-                    <p className="v2-muted">
-                      Nothing needs a decision right now.
-                    </p>
+                  <div className="v2-overview-grid">
+                    <section className="v2-panel v2-priority">
+                      <div className="v2-section-head">
+                        <div>
+                          <p className="v2-eyebrow">PRIORITIZED FOR YOU</p>
+                          <h2>Next actions</h2>
+                        </div>
+                      </div>
+                      {actions.slice(0, 6).map((a) => (
+                        <Action
+                          key={a.id}
+                          {...a}
+                          onClick={() => goTarget(a.target)}
+                        />
+                      ))}
+                      {!actions.length && (
+                        <p className="v2-muted">
+                          Nothing needs a decision right now.
+                        </p>
+                      )}
+                    </section>
+                    <StepTracker state={state} audience="team" />
+                  </div>
+                  {status.blockers.length > 0 && (
+                    <section className="v2-panel">
+                      <h2>What is holding this up</h2>
+                      {status.blockers.map((b) => (
+                        <p className="v2-blocker" key={b}>
+                          ● {b}
+                        </p>
+                      ))}
+                    </section>
                   )}
-                </section>
-                <section className="v2-panel v2-readiness">
-                  <p className="v2-eyebrow">CONFIGURATION PREPARATION</p>
-                  <h2>
-                    {status.ready
-                      ? "Ready for configuration preparation"
-                      : "Preparation incomplete"}
-                  </h2>
-                  <p>
-                    Step{" "}
-                    <strong>
-                      {step.n} of {steps.length}
-                    </strong>{" "}
-                    · {step.name}
-                  </p>
-                  <div className="v2-progress">
-                    <span
-                      style={{
-                        width: `${(steps.filter((s) => s.status === "Done").length / steps.length) * 100}%`,
-                      }}
-                    />
-                  </div>
-                  <small>
-                    {steps.filter((s) => s.status === "Done").length} of{" "}
-                    {steps.length} steps complete. This is a step count, not a
-                    forecast of launch readiness.
-                  </small>
-                  <div className="v2-divider" />
-                  <strong>What is holding this up</strong>
-                  {status.blockers.map((b) => (
-                    <p className="v2-blocker" key={b}>
-                      ● {b}
-                    </p>
-                  ))}
-                  <button className="v2-link" onClick={() => go("package")}>
-                    Review package readiness →
-                  </button>
-                </section>
-              </div>
-              <section className="v2-coverage">
-                <div className="v2-section-head">
-                  <div>
-                    <p className="v2-eyebrow">FIVE KNOWLEDGE AREAS</p>
-                    <h2>Knowledge coverage</h2>
-                  </div>
-                  <button className="v2-link" onClick={() => go("knowledge")}>
-                    Explore all →
-                  </button>
-                </div>
-                <div className="v2-category-grid">
-                  {categories.map((cat, i) => {
-                    const items = state.knowledge.filter(
-                      (k) => k.category === cat,
-                    );
-                    const reviewed = items.filter((k) =>
-                      ["Internally reviewed", "Customer confirmed"].includes(
-                        k.status,
-                      ),
-                    ).length;
-                    return (
-                      <button
-                        className="v2-category-card"
-                        key={cat}
-                        onClick={() => openCategory(cat)}
-                      >
-                        <span className="v2-category-icon">
-                          {["◎", "↗", "▤", "◈", "⌘"][i]}
-                        </span>
-                        <strong>{cat}</strong>
-                        <small>
-                          {reviewed} reviewed · {items.length - reviewed}{" "}
-                          awaiting
-                        </small>
-                        <span className="v2-card-arrow">↗</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </section>
-              <div className="v2-bottom-grid">
-                <section className="v2-panel">
-                  <div className="v2-section-head">
-                    <h2>Recent activity</h2>
-                    <span>Fictional demo</span>
-                  </div>
-                  <div className="v2-timeline">
-                    <p>
-                      <b>●</b> Kickoff call transcript parsed{" "}
-                      <small>Oct 28</small>
-                    </p>
-                    <p>
-                      <b>●</b> Emergency routing conflict flagged{" "}
-                      <small>Oct 27</small>
-                    </p>
-                    <p>
-                      <b>●</b> Resident FAQ internally reviewed{" "}
-                      <small>Oct 26</small>
-                    </p>
-                  </div>
-                </section>
-                <section className="v2-panel">
-                  <div className="v2-section-head">
-                    <h2>Latest setup package</h2>
-                    <span className="v2-status amber">
-                      {state.packageSnapshot === 0
-                        ? "Not exported"
-                        : status.stale
-                          ? "Outdated"
-                          : "Current"}
-                    </span>
-                  </div>
-                  <p>
-                    {state.packageSnapshot === 0
-                      ? "No package downloaded yet"
-                      : `Prototype export r${state.packageSnapshot}`}{" "}
-                    · Deterministic Markdown
-                  </p>
+                </>
+              ) : (
+                <>
                   <p className="v2-muted">
-                    Unresolved operational rules are excluded from agent-facing
-                    sections.
+                    This is what the customer sees: the same data, without
+                    internal detail.
                   </p>
-                  <button className="v2-link" onClick={() => go("package")}>
-                    Preview package →
-                  </button>
-                </section>
-              </div>
-            </>
-          )}
-          {view === "actions" && (
-            <>
-              <div className="v2-page-head">
-                <div>
-                  <p className="v2-eyebrow">MY ACTIONS</p>
-                  <h1>Work that needs a decision</h1>
-                  <p>
-                    Task status stays separate from whether knowledge is
-                    reviewed or confirmed.
-                  </p>
-                </div>
-              </div>
-              <section className="v2-panel">
-                {actions.map((a) => (
-                  <Action
-                    key={a.id}
-                    icon={a.icon}
-                    tone={a.tone}
-                    title={a.title}
-                    subtitle={a.subtitle}
-                    owner={a.owner}
-                    due={a.due}
-                    button={a.button}
-                    onClick={() => goTarget(a.target)}
+                  <StepTracker
+                    state={state}
+                    audience="customer"
+                    role={undefined}
                   />
-                ))}
-                {!actions.length && (
-                  <p className="v2-muted">
-                    Nothing needs a decision right now.
-                  </p>
-                )}
-              </section>
-              <section className="v2-panel">
-                <div className="v2-section-head">
-                  <div>
-                    <p className="v2-eyebrow">PROCESS LOG</p>
-                    <h2>Repeated manual work</h2>
-                  </div>
-                </div>
-                <p className="v2-muted">
-                  Rule: once a step has been done by hand {AUTOMATION_THRESHOLD}{" "}
-                  times, it becomes an automation candidate. Counts are
-                  fictional demo data.
-                </p>
-                <ul className="v2-process">
-                  {processLog.map((p) => (
-                    <li key={p.id}>
-                      <span>{p.step}</span>
-                      <b>{p.count}×</b>
-                      <em>
-                        {p.automatedBy
-                          ? `Automated by: ${p.automatedBy}`
-                          : isAutomationCandidate(p.count)
-                            ? "Automation candidate"
-                            : "Watching"}
-                      </em>
-                    </li>
-                  ))}
-                </ul>
-              </section>
+                  <section className="v2-panel">
+                    <h2>What we are working on</h2>
+                    <ul>
+                      {actions.slice(0, 4).map((a) => (
+                        <li key={a.id}>{friendly(a)}</li>
+                      ))}
+                      {!actions.length && <li>Preparing for launch.</li>}
+                    </ul>
+                    <p className="v2-muted">
+                      Next update: weekly check-in on Friday. We will tell you
+                      as soon as each item is done.
+                    </p>
+                    <button className="v2-link" onClick={() => go("portal")}>
+                      Open the customer answer form →
+                    </button>
+                  </section>
+                </>
+              )}
             </>
           )}
-          {view === "sources" && (
+
+          {view === "requirements" && (
             <>
               <div className="v2-page-head">
                 <div>
-                  <p className="v2-eyebrow">SOURCE LIBRARY</p>
-                  <h1>Customer information</h1>
+                  <p className="v2-eyebrow">INTAKE SPEC</p>
+                  <h1>What the agent needs to know</h1>
                   <p>
-                    Originals, processing, AI extraction and staff review are
-                    separate steps.
+                    Twenty required facts in five areas. Each has a source, an
+                    owner, a status and a separate approval.
                   </p>
                 </div>
                 <button
                   className="v2-button"
-                  onClick={() => setSourceChooser(true)}
-                >
-                  ＋ Add customer information
-                </button>
-              </div>
-              {sourceChooser && (
-                <div
-                  className="v2-chooser"
-                  role="dialog"
-                  aria-label="Add customer information"
-                >
-                  <div className="v2-section-head">
-                    <h2>Add customer information</h2>
-                    <button
-                      className="v2-icon-button"
-                      aria-label="Close"
-                      onClick={() => setSourceChooser(false)}
-                    >
-                      ×
-                    </button>
-                  </div>
-                  <div className="v2-chooser-options">
-                    {[
-                      "Upload files",
-                      "Paste transcript",
-                      "Import website",
-                      "Add call/email note",
-                    ].map((item) => (
-                      <button
-                        key={item}
-                        className={sourceMethod === item ? "selected" : ""}
-                        onClick={() => setSourceMethod(item)}
-                      >
-                        {item}
-                      </button>
-                    ))}
-                  </div>
-                  <p className="v2-muted">
-                    Simulated form · no file is uploaded, no site is fetched,
-                    and nothing is saved on a server.
-                  </p>
-                  <label className="v2-field">
-                    Source title
-                    <input
-                      value={sourceTitle}
-                      onChange={(e) => setSourceTitle(e.target.value)}
-                      placeholder={
-                        sourceMethod === "Import website"
-                          ? "Fictional website snapshot"
-                          : "Name this source"
-                      }
-                    />
-                  </label>
-                  <button
-                    className="v2-button"
-                    disabled={!sourceTitle.trim()}
-                    onClick={() => {
-                      setLocalSources([...localSources, sourceTitle.trim()]);
-                      setSourceTitle("");
-                      setSourceChooser(false);
-                      flash(
-                        `“${sourceTitle}” added to this session as a simulated source. Parsing and extraction have not run.`,
-                      );
-                    }}
-                  >
-                    Add simulated source
-                  </button>
-                </div>
-              )}
-              <div className="v2-source-layout">
-                <div className="v2-source-list">
-                  <div className="v2-source-toolbar">
-                    <strong>
-                      {sources.length + localSources.length} sources
-                    </strong>
-                    <button
-                      className="v2-link"
-                      onClick={() => {
-                        setState((s) => ({
-                          ...s,
-                          sourceRun: sources
-                            .filter((x) => x.extraction.includes("candidates"))
-                            .filter((x) => x.extraction !== "Zero candidates")
-                            .map((x) => x.id),
-                        }));
-                        flash(
-                          "Simulated per-source extraction jobs finished. Existing candidate counts remain examples; no AI call occurred.",
-                        );
-                      }}
-                    >
-                      Run simulated extract all
-                    </button>
-                  </div>
-                  {sources.map((source) => (
-                    <button
-                      key={source.id}
-                      className={`v2-source-row ${selectedSource === source.id ? "selected" : ""}`}
-                      onClick={() => setSelectedSource(source.id)}
-                    >
-                      <span
-                        className={`v2-file-icon ${source.icon.toLowerCase()}`}
-                      >
-                        {source.icon}
-                      </span>
-                      <span className="v2-source-row-main">
-                        <strong>{source.title}</strong>
-                        <small>
-                          {source.type} · {source.received}
-                        </small>
-                        <span className="v2-source-state">
-                          {source.parse} <i>·</i>{" "}
-                          {state.sourceRun.includes(source.id)
-                            ? "Simulated extraction finished"
-                            : source.extraction}
-                        </span>
-                      </span>
-                      <span>›</span>
-                    </button>
-                  ))}
-                  {localSources.map((title, i) => (
-                    <div className="v2-source-row" key={`${title}-${i}`}>
-                      <span className="v2-file-icon">NEW</span>
-                      <span className="v2-source-row-main">
-                        <strong>{title}</strong>
-                        <small>Simulated session source</small>
-                        <span className="v2-source-state">
-                          Stored locally · parsing not run · extraction not run
-                        </span>
-                      </span>
-                    </div>
-                  ))}
-                </div>
-                <div className="v2-source-detail">
-                  <div className="v2-source-detail-head">
-                    <span
-                      className={`v2-file-icon ${activeSource.icon.toLowerCase()}`}
-                    >
-                      {activeSource.icon}
-                    </span>
-                    <div>
-                      <p className="v2-eyebrow">SOURCE DETAIL</p>
-                      <h2>{activeSource.title}</h2>
-                      <p>
-                        {activeSource.type} · Version 1 · {activeSource.scope}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="v2-source-steps">
-                    <div>
-                      <small>01 · Storage</small>
-                      <strong>Stored</strong>
-                    </div>
-                    <div>
-                      <small>02 · Parsing</small>
-                      <strong>{activeSource.parse}</strong>
-                    </div>
-                    <div>
-                      <small>03 · AI extraction</small>
-                      <strong>
-                        {state.sourceRun.includes(activeSource.id)
-                          ? "Simulated finish"
-                          : activeSource.extraction}
-                      </strong>
-                    </div>
-                    <div>
-                      <small>04 · Staff review</small>
-                      <strong>{activeSource.review}</strong>
-                    </div>
-                  </div>
-                  <p className="v2-muted">
-                    Supplied by {activeSource.suppliedBy} · Received{" "}
-                    {activeSource.received}
-                  </p>
-                  <div className="v2-evidence">
-                    <div className="v2-section-head">
-                      <strong>Example source excerpt</strong>
-                      <span>{activeSource.anchor}</span>
-                    </div>
-                    <blockquote>{activeSource.excerpt}</blockquote>
-                  </div>
-                  {activeSource.note && (
-                    <div className="v2-warning">{activeSource.note}</div>
-                  )}
-                  <div className="v2-actions">
-                    <button
-                      className="v2-button secondary"
-                      onClick={() => {
-                        setSourceNote(
-                          `Simulated retry recorded for ${activeSource.title}. No parser or model ran.`,
-                        );
-                      }}
-                    >
-                      Retry this step (demo)
-                    </button>
-                    <button
-                      className="v2-button"
-                      onClick={() => {
-                        setCategory("Team & Routing");
-                        go("knowledge");
-                      }}
-                    >
-                      View linked knowledge →
-                    </button>
-                  </div>
-                  {sourceNote && <p className="v2-muted">{sourceNote}</p>}
-                </div>
-              </div>
-            </>
-          )}
-          {view === "knowledge" && (
-            <>
-              <div className="v2-page-head">
-                <div>
-                  <p className="v2-eyebrow">KNOWLEDGE WORKSPACE</p>
-                  <h1>What we know, and why</h1>
-                  <p>
-                    Five categories with evidence beside each interpretation. A
-                    matched quote is not customer confirmation.
-                  </p>
-                </div>
-                <button
-                  className="v2-button secondary"
-                  onClick={() =>
+                  disabled={state.addedSources.includes(lateSource.id)}
+                  onClick={() => {
+                    update(addSource);
                     flash(
-                      "Manual knowledge entry is a simulated prototype control; no source record was created.",
-                    )
-                  }
+                      "A new source arrived. Two gaps were filled and the earlier consistency check is now out of date.",
+                    );
+                  }}
                 >
-                  ＋ Add manual note
+                  {state.addedSources.includes(lateSource.id)
+                    ? "Late email added"
+                    : "＋ Simulate a late email"}
                 </button>
               </div>
-              <div
-                className="v2-tabs"
-                role="tablist"
-                aria-label="Knowledge categories"
-              >
-                {categories.map((item) => (
-                  <button
-                    role="tab"
-                    aria-selected={category === item}
-                    className={category === item ? "active" : ""}
-                    key={item}
-                    onClick={() => {
-                      setCategory(item);
-                      setSelectedKnowledge(
-                        state.knowledge.find((k) => k.category === item)?.id ||
-                          "goal",
-                      );
-                    }}
-                  >
-                    {short(item)}
-                  </button>
-                ))}
-              </div>
-              <div className="v2-knowledge-layout">
-                <div className="v2-knowledge-list">
-                  {state.knowledge
-                    .filter((k) => k.category === category)
-                    .map((item) => (
-                      <button
-                        key={item.id}
-                        className={`v2-knowledge-card ${selectedKnowledge === item.id ? "selected" : ""}`}
-                        onClick={() => setSelectedKnowledge(item.id)}
-                      >
-                        <div className="v2-card-top">
-                          <span>{item.scope}</span>
-                          <span
-                            className={`v2-status ${item.status === "Customer confirmed" ? "green" : item.status === "Needs clarification" ? "red" : "amber"}`}
-                          >
-                            {item.status}
-                          </span>
-                        </div>
-                        <h3>{item.title}</h3>
-                        <p>{item.summary}</p>
-                        <small>
-                          Assignee: {item.assignee} · 1 linked source
-                        </small>
-                      </button>
-                    ))}
-                </div>
-                <div className="v2-knowledge-detail">
-                  <p className="v2-eyebrow">
-                    {activeKnowledge.category.toUpperCase()} ·{" "}
-                    {activeKnowledge.scope.toUpperCase()}
-                  </p>
-                  <h2>{activeKnowledge.title}</h2>
-                  <p>{activeKnowledge.detail}</p>
-                  <div className="v2-detail-grid">
-                    <div>
-                      <small>Knowledge state</small>
-                      <strong>{activeKnowledge.status}</strong>
-                    </div>
-                    <div>
-                      <small>Internal assignee</small>
-                      <strong>{activeKnowledge.assignee}</strong>
-                    </div>
-                    <div>
-                      <small>Extraction</small>
-                      <strong>Example AI candidate</strong>
-                    </div>
-                    <div>
-                      <small>Customer confirmation</small>
-                      <strong>
-                        {activeKnowledge.status === "Customer confirmed"
-                          ? "Recorded after staff approval"
-                          : "Not recorded"}
-                      </strong>
-                    </div>
-                  </div>
-                  <div className="v2-evidence">
-                    <p className="v2-eyebrow">
-                      SOURCE EVIDENCE · QUOTE MATCHED
-                    </p>
-                    <blockquote>{activeKnowledge.evidence}</blockquote>
-                    <span>{activeKnowledge.anchor}</span>
-                    <button
-                      className="v2-link"
-                      onClick={() => {
-                        setSelectedSource(activeKnowledge.sourceId);
-                        go("sources");
-                      }}
-                    >
-                      Open source →
-                    </button>
-                  </div>
-                  {activeKnowledge.critical &&
-                    activeKnowledge.status !== "Customer confirmed" && (
-                      <div className="v2-warning">
-                        <strong>Operational instruction blocked.</strong> The
-                        quote exists in the source, but the applicable route is
-                        disputed and cannot enter the agent-facing package.
-                      </div>
-                    )}
-                  <div className="v2-actions">
-                    {activeKnowledge.status === "Needs review" && (
-                      <button
-                        className="v2-button"
-                        onClick={() => {
-                          setState((s) => ({
-                            ...s,
-                            knowledge: s.knowledge.map((k) =>
-                              k.id === activeKnowledge.id
-                                ? { ...k, status: "Internally reviewed" }
-                                : k,
-                            ),
-                            knowledgeRevision: s.knowledgeRevision + 1,
-                          }));
-                          flash(
-                            "Internal review recorded in this simulated session. This is not a customer confirmation.",
-                          );
-                        }}
-                      >
-                        Mark internally reviewed
-                      </button>
-                    )}
-                    <button
-                      className="v2-button secondary"
-                      onClick={() => {
-                        setSelectedQuestion(
-                          activeKnowledge.id === "integration"
-                            ? "q-integration"
-                            : activeKnowledge.id === "pets"
-                              ? "q-pets"
-                              : "q-emergency",
-                        );
-                        go("clarifications");
-                      }}
-                    >
-                      Open clarification →
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </>
-          )}
-          {view === "clarifications" && (
-            <>
-              <div className="v2-page-head">
-                <div>
-                  <p className="v2-eyebrow">CLARIFICATION CENTER</p>
-                  <h1>Ask the right question</h1>
-                  <p>
-                    AI-drafted examples require specialist review. Questions are
-                    grouped by verified recipient before a simulated send.
-                  </p>
-                </div>
-                <button
-                  className="v2-button secondary"
-                  onClick={() => go("portal")}
-                >
-                  Open customer portal preview ↗
-                </button>
-              </div>
-              <div className="v2-clarify-layout">
-                <div className="v2-question-list">
-                  <div className="v2-section-head">
-                    <h2>Questions</h2>
-                    <span>{state.questions.length} total</span>
-                  </div>
-                  {state.questions.map((q) => (
-                    <button
-                      key={q.id}
-                      className={`v2-question-row ${selectedQuestion === q.id ? "selected" : ""}`}
-                      onClick={() => setSelectedQuestion(q.id)}
-                    >
+              <details className="v2-panel v2-sources">
+                <summary>
+                  <strong>Sources received ({allSources(state).length})</strong>
+                </summary>
+                {allSources(state).map((s) => (
+                  <div key={s.id} className="v2-source-row">
+                    <strong>{s.title}</strong>
+                    <small>
+                      {s.type} · {s.received} · from {s.suppliedBy} ·{" "}
                       <span
-                        className={`v2-question-dot ${q.status === "Resolved" ? "green" : q.status === "AI draft" ? "amber" : "blue"}`}
-                      />
-                      <span>
-                        <strong>{q.title}</strong>
-                        <small>
-                          {q.status} · {q.recipientRole}
-                        </small>
-                      </span>
-                      <span>›</span>
-                    </button>
-                  ))}
-                </div>
-                <div className="v2-question-detail">
-                  <div className="v2-section-head">
-                    <p className="v2-eyebrow">
-                      QUESTION DETAIL · {activeQuestion.id.toUpperCase()}
-                    </p>
-                    <span className="v2-status amber">
-                      {activeQuestion.status}
-                    </span>
-                  </div>
-                  <h2>{activeQuestion.title}</h2>
-                  <div className="v2-ai-note">
-                    <span>✦</span>
-                    <div>
-                      <strong>AI-drafted example · simulated</strong>
-                      <p>{activeQuestion.why}</p>
-                      <small>Evidence: {activeQuestion.source}</small>
-                    </div>
-                  </div>
-                  <label className="v2-field">
-                    Customer-friendly question
-                    <textarea
-                      value={activeQuestion.text}
-                      disabled={
-                        !(["AI draft", "Ready to send"] as string[]).includes(
-                          activeQuestion.status,
-                        )
-                      }
-                      onChange={(e) =>
-                        setState((s) =>
-                          updateQuestion(s, activeQuestion.id, {
-                            text: e.target.value,
-                            status: "AI draft",
-                          }),
-                        )
-                      }
-                    />
-                  </label>
-                  <div className="v2-detail-grid">
-                    <div>
-                      <small>Suggested recipient role</small>
-                      <strong>{activeQuestion.recipientRole}</strong>
-                    </div>
-                    <div>
-                      <small>Linked knowledge</small>
-                      <strong>
-                        {activeQuestion.knowledgeIds.length} items
-                      </strong>
-                    </div>
-                  </div>
-                  <div className="v2-actions">
-                    {activeQuestion.status === "AI draft" && (
-                      <button
-                        className="v2-button"
-                        onClick={() => {
-                          if (!activeQuestion.text.trim()) return;
-                          setState((s) =>
-                            updateQuestion(s, activeQuestion.id, {
-                              status: "Ready to send",
-                            }),
-                          );
-                          flash(
-                            "Staff reviewed the question wording. No customer message was sent.",
-                          );
-                        }}
+                        className={`v2-status ${s.parse === "Parsed" ? "green" : "amber"}`}
                       >
-                        Approve question wording
-                      </button>
-                    )}
-                    {activeQuestion.status === "Ready to send" && (
-                      <button
-                        className="v2-button secondary"
-                        onClick={() =>
-                          setState((s) =>
-                            updateQuestion(s, activeQuestion.id, {
-                              status: "AI draft",
-                            }),
+                        {s.parse}
+                      </span>
+                    </small>
+                    {s.note && <small>{s.note}</small>}
+                  </div>
+                ))}
+              </details>
+              {areas.map((area) => (
+                <section key={area} className="v2-area">
+                  <h2>{area}</h2>
+                  {state.facts
+                    .filter((f) => f.area === area)
+                    .map((f) => (
+                      <FactCard
+                        key={f.id}
+                        state={state}
+                        f={f}
+                        focused={focusFact === f.id}
+                        waiveNote={waiveNote[f.id] || ""}
+                        setWaiveNote={(v) =>
+                          setWaiveNote({ ...waiveNote, [f.id]: v })
+                        }
+                        onReview={() => update((s) => reviewFact(s, f.id))}
+                        onConfigure={() =>
+                          update((s) => markConfigured(s, f.id))
+                        }
+                        onWaive={() =>
+                          update((s) =>
+                            waiveFact(s, f.id, waiveNote[f.id] || ""),
                           )
                         }
-                      >
-                        Return to draft
-                      </button>
-                    )}
-                    {activeQuestion.knowledgeIds.map((id) => (
-                      <button
-                        className="v2-link"
-                        key={id}
-                        onClick={() => openKnowledge(id)}
-                      >
-                        View {state.knowledge.find((k) => k.id === id)?.title} →
-                      </button>
+                      />
                     ))}
-                  </div>
-                  {activeQuestion.revisions.length > 0 && (
-                    <div className="v2-response-review">
-                      <p className="v2-eyebrow">
-                        CUSTOMER RESPONSE · SELF-DECLARED IDENTITY
-                      </p>
-                      <h3>
-                        {activeQuestion.revisions.length >
-                        activeQuestion.reviewedRevision
-                          ? "Updated answer — review required"
-                          : "Latest reviewed answer"}
-                      </h3>
-                      <blockquote>
-                        {activeQuestion.revisions.at(-1)?.kind === "answer"
-                          ? activeQuestion.revisions.at(-1)?.value
-                          : activeQuestion.revisions.at(-1)?.kind === "unknown"
-                            ? "I don't know"
-                            : "Someone else should answer"}
-                      </blockquote>
-                      <p className="v2-muted">
-                        Revision {activeQuestion.revisions.length} · Earlier
-                        revisions retained · Recipient identity not verified by
-                        this demo.
-                      </p>
-                      {activeQuestion.revisions.at(-1)?.kind === "answer" &&
-                        activeQuestion.reviewedRevision <
-                          activeQuestion.revisions.length && (
-                          <>
-                            <div className="v2-warning">
-                              An expiring login-free link proves possession of
-                              the link, not the respondent&apos;s identity.
-                              Review the linked source, scope and response
-                              revision before approving any high-impact
-                              instruction.
-                            </div>
-                            <button
-                              className="v2-button"
-                              onClick={() => {
-                                setState((s) =>
-                                  reviewAnswer(s, activeQuestion.id),
-                                );
-                                flash(
-                                  activeQuestion.id === "q-emergency"
-                                    ? "Specialist approval recorded in this simulated session; linked emergency knowledge is now customer confirmed."
-                                    : "Response reviewed in this simulated session. Linked knowledge updated.",
-                                );
-                              }}
-                            >
-                              {activeQuestion.id === "q-emergency"
-                                ? "Approve instruction"
-                                : "Accept response and update knowledge"}
-                            </button>
-                          </>
-                        )}
-                      <details className="v2-history">
-                        <summary>View all response revisions</summary>
-                        {activeQuestion.revisions.map((r, i) => (
-                          <p key={i}>
-                            <strong>{r.at}</strong> —{" "}
-                            {r.kind === "answer" ? r.value : r.kind}
-                          </p>
-                        ))}
-                      </details>
-                    </div>
-                  )}
+                </section>
+              ))}
+            </>
+          )}
+
+          {view === "checks" && (
+            <>
+              <div className="v2-page-head">
+                <div>
+                  <p className="v2-eyebrow">CHECKS</p>
+                  <h1>Do the sources, and our own prompts, agree?</h1>
+                  <p>
+                    Run the consistency check whenever new information arrives.
+                    Conflicts go to the customer in one clarification batch.
+                  </p>
                 </div>
+                <button
+                  className="v2-button"
+                  onClick={() => {
+                    update(runConsistencyCheck);
+                    flash("Consistency check run on the current sources.");
+                  }}
+                >
+                  {report.ran ? "Run again" : "Run consistency check"}
+                </button>
               </div>
-              <section className="v2-panel v2-group-request">
-                <div className="v2-section-head">
-                  <div>
-                    <p className="v2-eyebrow">ONE RECIPIENT · ONE REQUEST</p>
-                    <h2>Group a customer review</h2>
-                  </div>
-                  <span className="v2-status blue">Simulated delivery</span>
+              {report.stale && (
+                <div className="v2-toast" role="status">
+                  A new source arrived after the last check. Run it again before
+                  relying on these results.
                 </div>
-                <p>
-                  Each recipient gets their own request with only their
-                  staff-approved questions and minimal context.
+              )}
+              <section className="v2-panel">
+                <h2>Consistency</h2>
+                {!report.ran ? (
+                  <p>
+                    Not run yet. {report.claimsChecked} statements from{" "}
+                    {report.sourcesChecked} sources are waiting to be compared.
+                  </p>
+                ) : (
+                  <>
+                    <p className="v2-muted">
+                      {report.claimsChecked} statements from{" "}
+                      {report.sourcesChecked} sources compared ·{" "}
+                      {report.conflicts.length} conflicts · {report.open.length}{" "}
+                      open · {report.variations.length} legitimate variation
+                      {report.variations.length === 1 ? "" : "s"}
+                    </p>
+                    {report.conflicts.map((c) => {
+                      const q = state.questions.find(
+                        (x) => x.id === c.questionId,
+                      );
+                      return (
+                        <div className="v2-conflict" key={c.id}>
+                          <div className="v2-section-head">
+                            <div>
+                              <p className="v2-eyebrow">
+                                {c.needs === "customer"
+                                  ? "SOURCES DISAGREE"
+                                  : "OUR OWN INSTRUCTIONS DISAGREE"}{" "}
+                                · {c.scope.toUpperCase()}
+                              </p>
+                              <h3>{c.topicLabel}</h3>
+                            </div>
+                            <span
+                              className={`v2-status ${c.resolved ? "green" : "amber"}`}
+                            >
+                              {c.resolved ? "Resolved" : "Open"}
+                            </span>
+                          </div>
+                          {c.claimIds.map((id) => {
+                            const claim = claims.find((x) => x.id === id)!;
+                            const src = allSources(state).find(
+                              (x) => x.id === claim.sourceId,
+                            );
+                            return (
+                              <blockquote key={id}>
+                                “{claim.quote}”
+                                <small>
+                                  {src?.title} · {claim.anchor}
+                                </small>
+                              </blockquote>
+                            );
+                          })}
+                          {c.resolved ? (
+                            <p>
+                              <strong>
+                                {c.resolution?.how === "internal fix"
+                                  ? "Fixed in our draft"
+                                  : c.resolution?.how === "default"
+                                    ? "Proceeding on default (unconfirmed)"
+                                    : "Customer answer approved"}
+                                :
+                              </strong>{" "}
+                              {c.resolution?.note}
+                            </p>
+                          ) : c.needs === "customer" ? (
+                            q &&
+                            (q.status === "Resolved" ||
+                              q.status === "Defaulted") ? (
+                              <button
+                                className="v2-button"
+                                onClick={() =>
+                                  update((s) => reopenQuestion(s, q.id))
+                                }
+                              >
+                                New evidence: ask the customer again
+                              </button>
+                            ) : (
+                              <a
+                                className="v2-link"
+                                href="#clarification-batch"
+                              >
+                                Ask the customer in the batch below ↓
+                              </a>
+                            )
+                          ) : (
+                            <div className="v2-fix">
+                              <p>Which instruction is intended?</p>
+                              {c.claimIds.map((id) => (
+                                <label key={id}>
+                                  <input
+                                    type="radio"
+                                    name={`fix-${c.id}`}
+                                    checked={fixChoice[c.id] === id}
+                                    onChange={() =>
+                                      setFixChoice({ ...fixChoice, [c.id]: id })
+                                    }
+                                  />{" "}
+                                  {claims.find((x) => x.id === id)?.value}
+                                </label>
+                              ))}
+                              <label className="v2-field">
+                                Reason, recorded with the fix
+                                <input
+                                  value={fixNote[c.id] || ""}
+                                  onChange={(e) =>
+                                    setFixNote({
+                                      ...fixNote,
+                                      [c.id]: e.target.value,
+                                    })
+                                  }
+                                />
+                              </label>
+                              <button
+                                className="v2-button"
+                                disabled={
+                                  !fixChoice[c.id] || !fixNote[c.id]?.trim()
+                                }
+                                onClick={() =>
+                                  update((s) =>
+                                    resolveInternally(
+                                      s,
+                                      c.id,
+                                      fixChoice[c.id],
+                                      fixNote[c.id],
+                                    ),
+                                  )
+                                }
+                              >
+                                Record fix
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                    {report.variations.map((v) => (
+                      <div className="v2-conflict calm" key={v.id}>
+                        <p className="v2-eyebrow">
+                          NOT A CONFLICT · DIFFERENT SCOPES
+                        </p>
+                        <h3>{v.topicLabel}</h3>
+                        {v.claimIds.map((id) => {
+                          const claim = claims.find((x) => x.id === id)!;
+                          return (
+                            <p key={id}>
+                              <strong>{claim.scope}:</strong> {claim.value}
+                            </p>
+                          );
+                        })}
+                      </div>
+                    ))}
+                  </>
+                )}
+              </section>
+
+              <section className="v2-panel" id="clarification-batch">
+                <p className="v2-eyebrow">ONE BATCH PER RECIPIENT</p>
+                <h2>Clarification batch</h2>
+                <p className="v2-muted">
+                  Questions are ranked by whether they block launch.
+                  Non-critical questions can carry a default if there is no
+                  reply; critical ones never do.
                 </p>
+                {[...state.questions]
+                  .sort(
+                    (a, b) =>
+                      Number(questionCritical(state, b)) -
+                      Number(questionCritical(state, a)),
+                  )
+                  .map((q) => (
+                    <QuestionCard
+                      key={q.id}
+                      q={q}
+                      critical={questionCritical(state, q)}
+                      onText={(text) =>
+                        update((s) => updateQuestion(s, q.id, { text }))
+                      }
+                      onApprove={() =>
+                        update((s) =>
+                          updateQuestion(s, q.id, { status: "Ready to send" }),
+                        )
+                      }
+                      onReview={() => {
+                        update((s) => reviewAnswer(s, q.id));
+                        flash(
+                          "Answer approved. The linked facts are now customer-confirmed.",
+                        );
+                      }}
+                      onDefault={() => {
+                        update((s) => applyDefault(s, q.id));
+                        flash(
+                          "Deadline passed with no reply: proceeding on the default and flagging it as unconfirmed.",
+                        );
+                      }}
+                    />
+                  ))}
                 {Object.keys(recipients).map((role) => {
-                  const mine = state.questions.filter(
-                    (q) => q.recipientRole === role,
-                  );
-                  const approved = selectedQuestions.filter(
-                    (id) =>
-                      mine.some((q) => q.id === id) &&
-                      state.questions.find((q) => q.id === id)?.status ===
-                        "Ready to send",
+                  const ready = state.questions.filter(
+                    (q) =>
+                      q.recipientRole === role && q.status === "Ready to send",
                   );
                   const name = recipients[role].name;
                   return (
@@ -1523,34 +898,26 @@ export default function Prototype() {
                       <strong>
                         {name} · {role}
                       </strong>
-                      <div className="v2-group-list">
-                        {mine.map((q) => (
-                          <label key={q.id}>
-                            <input
-                              type="checkbox"
-                              checked={selectedQuestions.includes(q.id)}
-                              onChange={() => toggleSelected(q.id)}
-                            />{" "}
-                            <span>
-                              {q.title}
-                              <small>{q.status}</small>
-                            </span>
-                          </label>
-                        ))}
-                      </div>
                       <div className="v2-actions">
                         <button
                           className="v2-button"
-                          disabled={!approved.length}
+                          disabled={!ready.length}
                           onClick={() => {
-                            setState((s) => sendRequest(s, role, approved));
+                            update((s) =>
+                              sendRequest(
+                                s,
+                                role,
+                                ready.map((q) => q.id),
+                              ),
+                            );
                             setPortalRole(role);
                             flash(
-                              `Simulated request created for ${name}. No email, token, or backend link was generated. Open the local portal preview.`,
+                              `Simulated request created for ${name}. No email or link was generated.`,
                             );
                           }}
                         >
-                          Simulate sending request to {name}
+                          Simulate sending {ready.length || ""} question
+                          {ready.length === 1 ? "" : "s"} to {name}
                         </button>
                         {sentQuestionIds(state, role).length > 0 && (
                           <button
@@ -1560,7 +927,7 @@ export default function Prototype() {
                               go("portal");
                             }}
                           >
-                            Open local customer portal →
+                            Open the customer answer form →
                           </button>
                         )}
                       </div>
@@ -1570,178 +937,18 @@ export default function Prototype() {
               </section>
             </>
           )}
-          {view === "checks" && (
-            <>
-              <div className="v2-page-head">
-                <div>
-                  <p className="v2-eyebrow">CONSISTENCY CHECK</p>
-                  <h1>Do the sources agree with each other?</h1>
-                  <p>
-                    Compares statements across customer sources and our own
-                    draft instructions. Conflicting instructions must be fixed
-                    before an agent sees them.
-                  </p>
-                </div>
-                <button
-                  className="v2-button"
-                  onClick={() => {
-                    setState((s) => runConsistencyCheck(s));
-                    flash("Consistency check run on the current knowledge.");
-                  }}
-                >
-                  {report.ran ? "Run again" : "Run consistency check"}
-                </button>
-              </div>
-              {!report.ran ? (
-                <section className="v2-panel">
-                  <p>
-                    Not run yet. {claims.length} statements from{" "}
-                    {new Set(claims.map((c) => c.sourceId)).size} sources are
-                    waiting to be compared.
-                  </p>
-                </section>
-              ) : (
-                <>
-                  <p className="v2-muted">
-                    {report.claimsChecked} statements from{" "}
-                    {report.sourcesChecked} sources compared ·{" "}
-                    {report.conflicts.length} conflicts · {report.open.length}{" "}
-                    open · {report.variations.length} legitimate variation
-                    {report.variations.length === 1 ? "" : "s"}
-                  </p>
-                  {report.conflicts.map((c) => (
-                    <section className="v2-panel v2-conflict" key={c.id}>
-                      <div className="v2-section-head">
-                        <div>
-                          <p className="v2-eyebrow">
-                            {c.needs === "customer"
-                              ? "SOURCES DISAGREE"
-                              : "OUR OWN INSTRUCTIONS DISAGREE"}{" "}
-                            · {c.scope.toUpperCase()}
-                          </p>
-                          <h2>{c.topicLabel}</h2>
-                        </div>
-                        <span
-                          className={`v2-status ${c.resolved ? "green" : "amber"}`}
-                        >
-                          {c.resolved ? "Resolved" : "Open"}
-                        </span>
-                      </div>
-                      {c.claimIds.map((id) => {
-                        const claim = claims.find((x) => x.id === id)!;
-                        const src = sources.find(
-                          (x) => x.id === claim.sourceId,
-                        );
-                        return (
-                          <blockquote key={id}>
-                            “{claim.quote}”
-                            <small>
-                              {src?.title} · {claim.anchor}
-                            </small>
-                          </blockquote>
-                        );
-                      })}
-                      {c.resolved ? (
-                        <p>
-                          <strong>
-                            {c.resolution?.how === "internal fix"
-                              ? "Fixed in our draft"
-                              : "Customer answer approved"}
-                            :
-                          </strong>{" "}
-                          {c.resolution?.note}
-                        </p>
-                      ) : c.needs === "customer" ? (
-                        <button
-                          className="v2-button"
-                          onClick={() => {
-                            if (c.questionId) setSelectedQuestion(c.questionId);
-                            go("clarifications");
-                          }}
-                        >
-                          Ask the customer →
-                        </button>
-                      ) : (
-                        <div className="v2-fix">
-                          <p>Which instruction is intended?</p>
-                          {c.claimIds.map((id) => (
-                            <label key={id}>
-                              <input
-                                type="radio"
-                                name={`fix-${c.id}`}
-                                checked={fixChoice[c.id] === id}
-                                onChange={() =>
-                                  setFixChoice({ ...fixChoice, [c.id]: id })
-                                }
-                              />{" "}
-                              {claims.find((x) => x.id === id)?.value}
-                            </label>
-                          ))}
-                          <label className="v2-field">
-                            Reason, recorded with the fix
-                            <input
-                              value={fixNote[c.id] || ""}
-                              onChange={(e) =>
-                                setFixNote({
-                                  ...fixNote,
-                                  [c.id]: e.target.value,
-                                })
-                              }
-                            />
-                          </label>
-                          <button
-                            className="v2-button"
-                            disabled={
-                              !fixChoice[c.id] || !fixNote[c.id]?.trim()
-                            }
-                            onClick={() =>
-                              setState((s) =>
-                                resolveInternally(
-                                  s,
-                                  c.id,
-                                  fixChoice[c.id],
-                                  fixNote[c.id],
-                                ),
-                              )
-                            }
-                          >
-                            Record fix
-                          </button>
-                        </div>
-                      )}
-                    </section>
-                  ))}
-                  {report.variations.map((v) => (
-                    <section className="v2-panel" key={v.id}>
-                      <p className="v2-eyebrow">
-                        NOT A CONFLICT · DIFFERENT SCOPES
-                      </p>
-                      <h2>{v.topicLabel}</h2>
-                      {v.claimIds.map((id) => {
-                        const claim = claims.find((x) => x.id === id)!;
-                        return (
-                          <p key={id}>
-                            <strong>{claim.scope}:</strong> {claim.value}
-                          </p>
-                        );
-                      })}
-                    </section>
-                  ))}
-                </>
-              )}
-            </>
-          )}
+
           {view === "qa" && (
             <>
               <div className="v2-page-head">
                 <div>
                   <p className="v2-eyebrow">QA &amp; LAUNCH</p>
-                  <h1>Test cases and launch checklist</h1>
+                  <h1>Test cases and launch gate</h1>
                   <p>
-                    Test cases are generated from reviewed knowledge. This app
-                    does not run them: a specialist tries each scenario and
-                    records the result. Changing knowledge marks earlier results
-                    “Needs retest”.
+                    Cases are generated from reviewed facts. This app does not
+                    run them: a specialist tries each scenario and records the
+                    result. Changing a fact marks its earlier results “Needs
+                    retest”.
                   </p>
                 </div>
               </div>
@@ -1761,193 +968,223 @@ export default function Prototype() {
               </section>
               {cases.length === 0 && (
                 <section className="v2-panel">
-                  <p>No reviewed knowledge to test yet.</p>
+                  <p>
+                    No reviewed facts to test yet. Review facts in Requirements
+                    first.
+                  </p>
                 </section>
               )}
-              {cases.map((t) => {
-                const result = testStatus(state, t);
-                return (
-                  <section className="v2-panel v2-testcase" key={t.id}>
-                    <div className="v2-section-head">
-                      <div>
-                        <p className="v2-eyebrow">
-                          {t.kind.toUpperCase()}
-                          {t.critical ? " · CRITICAL" : ""} · {t.id}
-                        </p>
-                        <h2>{t.scenario}</h2>
-                      </div>
-                      <span
-                        className={`v2-status ${result === "Pass" ? "green" : result === "Not run" ? "blue" : "amber"}`}
-                      >
-                        {result}
-                      </span>
-                    </div>
-                    <p>
-                      <strong>Expected:</strong> {t.expected}
-                    </p>
-                    <label className="v2-field">
-                      Note
-                      <input
-                        value={testNotes[t.id] ?? state.tests[t.id]?.note ?? ""}
-                        onChange={(e) =>
-                          setTestNotes({ ...testNotes, [t.id]: e.target.value })
-                        }
-                      />
-                    </label>
-                    <div className="v2-actions">
-                      <button
-                        className="v2-button secondary"
-                        onClick={() =>
-                          setState((s) =>
-                            recordTest(s, t.id, "Pass", testNotes[t.id] ?? ""),
-                          )
-                        }
-                      >
-                        Record pass
-                      </button>
-                      <button
-                        className="v2-button secondary"
-                        onClick={() =>
-                          setState((s) =>
-                            recordTest(s, t.id, "Fail", testNotes[t.id] ?? ""),
-                          )
-                        }
-                      >
-                        Record fail
-                      </button>
-                    </div>
-                  </section>
-                );
-              })}
-              <section className="v2-panel">
-                <div className="v2-section-head">
-                  <h2>Weekly check-in draft</h2>
-                  <button
-                    className="v2-button secondary"
-                    onClick={() => setCheckIn(weeklyCheckIn(state))}
-                  >
-                    Generate from current state
-                  </button>
-                </div>
-                {checkIn && <pre className="v2-pre">{checkIn}</pre>}
-              </section>
+              {state.facts
+                .filter((f) => cases.some((t) => t.factId === f.id))
+                .map((f) => {
+                  const mine = cases.filter((t) => t.factId === f.id);
+                  const passing = mine.filter(
+                    (t) => testStatus(state, t) === "Pass",
+                  ).length;
+                  return (
+                    <details
+                      className="v2-panel v2-testgroup"
+                      key={f.id}
+                      open={mine.some((t) => t.critical) || undefined}
+                    >
+                      <summary>
+                        <strong>
+                          {f.id} · {f.label}
+                        </strong>{" "}
+                        <span className="v2-muted">
+                          {passing} of {mine.length} passing
+                          {f.critical ? " · critical" : ""}
+                        </span>
+                      </summary>
+                      {mine.map((t) => {
+                        const result = testStatus(state, t);
+                        return (
+                          <div className="v2-testcase" key={t.id}>
+                            <div className="v2-section-head">
+                              <div>
+                                <p className="v2-eyebrow">
+                                  {t.kind.toUpperCase()}
+                                  {t.critical ? " · CRITICAL" : ""} · {t.id}
+                                </p>
+                                <p>{t.scenario}</p>
+                              </div>
+                              <span className={`v2-status ${tone(result)}`}>
+                                {result}
+                              </span>
+                            </div>
+                            <p>
+                              <strong>Expected:</strong> {t.expected}
+                            </p>
+                            <label className="v2-field">
+                              Note
+                              <input
+                                value={
+                                  testNotes[t.id] ??
+                                  state.tests[t.id]?.note ??
+                                  ""
+                                }
+                                onChange={(e) =>
+                                  setTestNotes({
+                                    ...testNotes,
+                                    [t.id]: e.target.value,
+                                  })
+                                }
+                              />
+                            </label>
+                            <div className="v2-actions">
+                              <button
+                                className="v2-button secondary"
+                                onClick={() =>
+                                  update((s) =>
+                                    recordTest(
+                                      s,
+                                      t.id,
+                                      "Pass",
+                                      testNotes[t.id] ?? "",
+                                    ),
+                                  )
+                                }
+                              >
+                                Record pass
+                              </button>
+                              <button
+                                className="v2-button secondary"
+                                onClick={() =>
+                                  update((s) =>
+                                    recordTest(
+                                      s,
+                                      t.id,
+                                      "Fail",
+                                      testNotes[t.id] ?? "",
+                                    ),
+                                  )
+                                }
+                              >
+                                Record fail
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </details>
+                  );
+                })}
             </>
           )}
-          {view === "package" && (
+
+          {view === "process" && (
             <>
               <div className="v2-page-head">
                 <div>
-                  <p className="v2-eyebrow">AGENT SETUP PACKAGE</p>
-                  <h1>Prepared for a human handoff</h1>
+                  <p className="v2-eyebrow">PROCESS &amp; OUTCOMES</p>
+                  <h1>How the work is going, and what to automate next</h1>
                   <p>
-                    Deterministic Markdown from eligible knowledge. This does
-                    not configure, test, or launch an agent.
+                    You can only automate what you can see. This tracks the
+                    steps, repeated manual work and outcomes.
                   </p>
                 </div>
-                <button className="v2-button" onClick={downloadZip}>
-                  ↓ Download prototype ZIP
-                </button>
               </div>
-              <div
-                className={`v2-package-banner ${status.ready ? "ready" : "blocked"}`}
-              >
-                <div>
-                  <p className="v2-eyebrow">
-                    PREVIEW R{state.knowledgeRevision} · TEMPLATE PROTOTYPE-1
-                  </p>
-                  <h2>
-                    {status.stale
-                      ? "Previous download outdated — regenerate"
-                      : status.ready
-                        ? "Ready for configuration preparation"
-                        : "Draft — preparation incomplete"}
-                  </h2>
-                  <p>
-                    {status.ready
-                      ? "Critical information has a reviewed customer answer. Downstream setup remains manual."
-                      : "Critical information blockers keep disputed instructions out of operational sections."}
-                  </p>
-                </div>
-                <span>
-                  {status.stale
-                    ? "OUTDATED"
-                    : status.ready
-                      ? "REVIEWED"
-                      : "DRAFT"}
-                </span>
-              </div>
-              <div className="v2-package-layout">
-                <div className="v2-package-files">
-                  <h3>Package files</h3>
-                  {Object.keys(files).map((name) => (
-                    <button
-                      className={packageSection === name ? "selected" : ""}
-                      key={name}
-                      onClick={() => setPackageSection(name)}
-                    >
-                      <span>▤</span>
-                      {name}
-                    </button>
+              <section className="v2-panel">
+                <h2>Time per stage (illustrative)</h2>
+                <ul className="v2-process">
+                  {stageDays.map((s) => (
+                    <li key={s.name}>
+                      <span>{s.name}</span>
+                      <b>{s.days}</b>
+                    </li>
                   ))}
-                </div>
-                <div className="v2-package-preview">
-                  <div className="v2-section-head">
-                    <div>
-                      <p className="v2-eyebrow">READ-ONLY PREVIEW</p>
-                      <h2>{packageSection}</h2>
+                </ul>
+              </section>
+              <section className="v2-panel">
+                <h2>Repeated manual work</h2>
+                <p className="v2-muted">
+                  Rule: once a step has been done by hand {AUTOMATION_THRESHOLD}{" "}
+                  times, it becomes an automation candidate. Counts are earlier
+                  onboardings (fictional) plus actions you take in this session.
+                </p>
+                <ul className="v2-process">
+                  {processCounts(state).map((p) => (
+                    <li key={p.id}>
+                      <span>{p.label}</span>
+                      <b>
+                        {p.total}×{p.live ? ` (${p.live} now)` : ""}
+                      </b>
+                      <em className={p.candidate ? "hot" : ""}>
+                        {p.automatedBy
+                          ? `Automated by: ${p.automatedBy}`
+                          : p.candidate
+                            ? "Automation candidate"
+                            : "Watching"}
+                      </em>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+              <section className="v2-panel">
+                <h2>After launch: issues become tests (illustrative)</h2>
+                {seedIssues.map((i) => {
+                  const done = state.extraTests.some(
+                    (t) => t.id === `T-${i.id}`,
+                  );
+                  return (
+                    <div className="v2-issue" key={i.id}>
+                      <span>{i.text}</span>
+                      <button
+                        className="v2-button secondary"
+                        disabled={done}
+                        onClick={() => update((s) => convertIssue(s, i.id))}
+                      >
+                        {done ? "Added to QA" : "Turn into a test case"}
+                      </button>
                     </div>
-                    <button
-                      className="v2-link"
-                      onClick={() => {
-                        navigator.clipboard
-                          .writeText(files[packageSection])
-                          .then(
-                            () =>
-                              flash(
-                                "Markdown copied from this simulated prototype.",
-                              ),
-                            () =>
-                              flash("Clipboard unavailable in this browser."),
-                          );
-                      }}
-                    >
-                      Copy section ↗
-                    </button>
-                  </div>
-                  <pre>{files[packageSection]}</pre>
+                  );
+                })}
+              </section>
+              <section className="v2-panel">
+                <h2>Updates and export</h2>
+                <div className="v2-actions">
+                  <button
+                    className="v2-button secondary"
+                    onClick={() => setOutput(weeklyCheckIn(state))}
+                  >
+                    Draft the weekly check-in
+                  </button>
+                  <button
+                    className="v2-button secondary"
+                    onClick={() => setOutput(slackUpdate(state))}
+                  >
+                    Draft a Slack update
+                  </button>
+                  <button
+                    className="v2-button secondary"
+                    onClick={() =>
+                      download(
+                        "onboarding-rows.csv",
+                        exportCsv(state),
+                        "text/csv",
+                      )
+                    }
+                  >
+                    Download rows (CSV)
+                  </button>
+                  <button
+                    className="v2-button secondary"
+                    onClick={() =>
+                      download(
+                        "onboarding.json",
+                        exportJson(state),
+                        "application/json",
+                      )
+                    }
+                  >
+                    Download JSON
+                  </button>
                 </div>
-              </div>
-              <section className="v2-panel v2-open-items">
-                <div className="v2-section-head">
-                  <div>
-                    <p className="v2-eyebrow">OPEN ITEMS</p>
-                    <h2>What still needs a decision</h2>
-                  </div>
-                  <span>{status.blockers.length} critical</span>
-                </div>
-                {status.blockers.map((b) => (
-                  <Action
-                    key={b}
-                    icon="!"
-                    tone="red"
-                    title={b}
-                    subtitle="Owned by Avery Morgan · blocks preparation"
-                    owner="Avery Morgan"
-                    due="Open"
-                    button="Review"
-                    onClick={() => go("clarifications")}
-                  />
-                ))}
-                <Action
-                  icon="↗"
-                  tone="blue"
-                  title="Connect PMS through approved setup process"
-                  subtitle="Downstream dependency · no credentials stored here"
-                  owner="Implementation team"
-                  due="Later"
-                  button="View"
-                  onClick={() => openKnowledge("integration")}
-                />
+                <p className="v2-muted">
+                  Plain rows that a table tool such as Coda could import.
+                  Nothing is sent anywhere.
+                </p>
+                {output && <pre className="v2-pre">{output}</pre>}
               </section>
             </>
           )}
@@ -1957,28 +1194,264 @@ export default function Prototype() {
   );
 }
 
+function StepTracker({
+  state,
+  audience,
+  role,
+}: {
+  state: PrototypeState;
+  audience: "team" | "customer";
+  role?: string;
+}) {
+  const steps = onboardingSteps(state);
+  const step = currentStep(state);
+  const needs = needsFromCustomer(state, role);
+  return (
+    <section className="v2-panel v2-tracker" aria-label="Onboarding progress">
+      <p className="v2-eyebrow">
+        STEP {step.n} OF {steps.length} · {step.name.toUpperCase()}
+      </p>
+      <ol className="v2-steps">
+        {steps.map((s) => (
+          <li key={s.n} className={s.status.toLowerCase()}>
+            <b>{s.status === "Done" ? "✓" : s.n}</b>
+            <span>
+              {s.name}
+              <small>{s.detail}</small>
+              {audience === "team" && s.status !== "Upcoming" && (
+                <ul className="v2-pieces">
+                  {s.pieces.map((p) => (
+                    <li key={p.label} className={p.done ? "done" : ""}>
+                      {p.done ? "✓" : "○"} {p.label}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </span>
+          </li>
+        ))}
+      </ol>
+      {audience === "customer" && (
+        <>
+          <strong>What we need from you to unblock</strong>
+          {needs.length ? (
+            <ul>
+              {needs.map((n) => (
+                <li key={n}>{n}</li>
+              ))}
+            </ul>
+          ) : (
+            <p className="v2-muted">Nothing outstanding from you right now.</p>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+function FactCard({
+  state,
+  f,
+  focused,
+  waiveNote,
+  setWaiveNote,
+  onReview,
+  onConfigure,
+  onWaive,
+}: {
+  state: PrototypeState;
+  f: Fact;
+  focused: boolean;
+  waiveNote: string;
+  setWaiveNote: (v: string) => void;
+  onReview: () => void;
+  onConfigure: () => void;
+  onWaive: () => void;
+}) {
+  const life = f.waived ? "Waived" : shownLifecycle(state, f);
+  const value = shownValue(f);
+  const canReview =
+    f.value !== null &&
+    f.approval === "Not reviewed" &&
+    f.lifecycle !== "Needs clarification";
+  const canConfigure =
+    configurable(f) &&
+    f.lifecycle !== "Configured" &&
+    (!f.critical || isConfirmed(f));
+  const canWaive = coverageOf(f) === "empty" && !f.critical;
+  const source = f.sourceId
+    ? allSources(state).find((s) => s.id === f.sourceId)?.title
+    : null;
+  return (
+    <div
+      id={`fact-${f.id}`}
+      className={`v2-fact ${coverageOf(f) === "empty" ? "gap" : ""} ${focused ? "focused" : ""}`}
+    >
+      <div className="v2-fact-head">
+        <strong>
+          <span className="v2-fact-id">{f.id}</span> {f.label}
+          {f.critical && <span className="v2-critical"> critical</span>}
+        </strong>
+        <span className="v2-badges">
+          <span className={`v2-status ${f.waived ? "gray" : tone(life)}`}>
+            {life}
+          </span>
+          <span className={`v2-status ${tone(f.approval)}`}>{f.approval}</span>
+        </span>
+      </div>
+      {value ? (
+        <p className="v2-fact-value">{value}</p>
+      ) : (
+        <p className="v2-fact-value gap">Not received yet.</p>
+      )}
+      {f.customerAnswer && f.customerAnswer.value !== f.value && (
+        <p className="v2-muted">Customer answer: {f.customerAnswer.value}</p>
+      )}
+      {f.note && <p className="v2-muted">{f.note}</p>}
+      {f.waived && (
+        <p className="v2-muted">
+          Waived by {f.waived.owner}: {f.waived.reason}
+        </p>
+      )}
+      <small className="v2-muted">
+        Owner {f.owner} · {source ? `${source} · ` : ""}
+        {f.anchor}
+      </small>
+      {f.evidence && (
+        <details className="v2-history">
+          <summary>Evidence</summary>
+          <p>“{f.evidence}”</p>
+        </details>
+      )}
+      {(canReview || canConfigure || canWaive) && (
+        <div className="v2-actions">
+          {canReview && (
+            <button className="v2-button secondary" onClick={onReview}>
+              Mark reviewed
+            </button>
+          )}
+          {canConfigure && (
+            <button className="v2-button secondary" onClick={onConfigure}>
+              Mark configured
+            </button>
+          )}
+          {canWaive && (
+            <>
+              <input
+                aria-label={`Reason to waive ${f.label}`}
+                placeholder="Reason to waive"
+                value={waiveNote}
+                onChange={(e) => setWaiveNote(e.target.value)}
+              />
+              <button
+                className="v2-button secondary"
+                disabled={!waiveNote.trim()}
+                onClick={onWaive}
+              >
+                Waive with reason
+              </button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function QuestionCard({
+  q,
+  critical,
+  onText,
+  onApprove,
+  onReview,
+  onDefault,
+}: {
+  q: Question;
+  critical: boolean;
+  onText: (text: string) => void;
+  onApprove: () => void;
+  onReview: () => void;
+  onDefault: () => void;
+}) {
+  const latest = q.revisions.at(-1);
+  const pending = q.revisions.length > q.reviewedRevision;
+  return (
+    <div className="v2-question">
+      <div className="v2-section-head">
+        <div>
+          <p className="v2-eyebrow">
+            {q.recipientRole.toUpperCase()} ·{" "}
+            {critical ? "BLOCKS LAUNCH" : "NON-CRITICAL"}
+          </p>
+          <h3>{q.title}</h3>
+        </div>
+        <span className={`v2-status ${tone(q.status)}`}>{q.status}</span>
+      </div>
+      {q.status === "AI draft" ? (
+        <label className="v2-field">
+          Question wording (AI draft, edit before approving)
+          <textarea value={q.text} onChange={(e) => onText(e.target.value)} />
+        </label>
+      ) : (
+        <p>{q.text}</p>
+      )}
+      <p className="v2-muted">Why we are asking: {q.why}</p>
+      <ul className="v2-optionlist">
+        {q.options.map((o) => (
+          <li key={o}>{o}</li>
+        ))}
+      </ul>
+      <p className="v2-muted">
+        {q.defaultIfNoReply
+          ? `Default if no reply by the deadline: ${q.defaultIfNoReply}.`
+          : "No default: this needs a customer answer before launch."}
+      </p>
+      {pending && latest && (
+        <div className="v2-answer">
+          <strong>Customer reply (evidence, not yet approved):</strong>
+          <p>
+            {latest.kind === "answer"
+              ? latest.value
+              : latest.kind === "unknown"
+                ? "I don’t know"
+                : "Someone else should answer"}
+          </p>
+          {latest.kind === "answer" && (
+            <button className="v2-button" onClick={onReview}>
+              Approve instruction
+            </button>
+          )}
+        </div>
+      )}
+      <div className="v2-actions">
+        {q.status === "AI draft" && (
+          <button className="v2-button secondary" onClick={onApprove}>
+            Approve question wording
+          </button>
+        )}
+        {q.status === "Sent" && q.defaultIfNoReply && !critical && (
+          <button className="v2-button secondary" onClick={onDefault}>
+            Simulate: no reply by the deadline
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function Action({
   icon,
-  tone,
+  tone: t,
   title,
   subtitle,
   owner,
   due,
   button,
   onClick,
-}: {
-  icon: string;
-  tone: string;
-  title: string;
-  subtitle: string;
-  owner: string;
-  due: string;
-  button: string;
-  onClick: () => void;
-}) {
+}: NextAction & { onClick: () => void }) {
   return (
     <div className="v2-action-row">
-      <span className={`v2-action-icon ${tone}`}>{icon}</span>
+      <span className={`v2-action-icon ${t}`}>{icon}</span>
       <div>
         <strong>{title}</strong>
         <small>{subtitle}</small>

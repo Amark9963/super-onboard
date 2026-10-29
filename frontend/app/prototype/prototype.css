@@ -1713,3 +1713,154 @@
     grid-column: 1 / -1;
   }
 }
+
+/* Spec, audience toggle, questions */
+.v2-status.gray {
+  background: #eceeed;
+  color: #55615b;
+}
+.v2-toggle {
+  display: inline-flex;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 20px;
+  overflow: hidden;
+  align-self: flex-start;
+}
+.v2-toggle button {
+  background: transparent;
+  color: #fff;
+  border: 0;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+.v2-toggle button.selected {
+  background: #fff;
+  color: #1c4939;
+}
+.v2-area {
+  margin-top: 24px;
+}
+.v2-fact {
+  background: #fff;
+  border: 1px solid #e3e8e5;
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin: 10px 0;
+}
+.v2-fact.gap {
+  border-style: dashed;
+  background: #fbf9f4;
+}
+.v2-fact.focused {
+  box-shadow: 0 0 0 2px #1c4939;
+}
+.v2-fact-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.v2-badges {
+  display: inline-flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.v2-fact-id {
+  color: #66736c;
+  font-size: 12px;
+  margin-right: 4px;
+}
+.v2-critical {
+  color: #aa4b32;
+  font-size: 12px;
+}
+.v2-fact-value {
+  margin: 8px 0;
+}
+.v2-fact-value.gap {
+  color: #8b5f19;
+}
+.v2-sources summary {
+  cursor: pointer;
+}
+.v2-source-row {
+  margin-top: 10px;
+}
+.v2-source-row small {
+  display: block;
+  color: #66736c;
+}
+.v2-question {
+  border-top: 1px solid #e3e8e5;
+  padding: 14px 0;
+}
+.v2-optionlist {
+  margin: 6px 0;
+  padding-left: 18px;
+  color: #3c4a43;
+}
+.v2-answer {
+  background: #faf6ec;
+  padding: 10px 12px;
+  border-radius: 8px;
+  margin: 8px 0;
+}
+.v2-options {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0;
+}
+.v2-options label {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+.v2-conflict {
+  border-top: 1px solid #e3e8e5;
+  padding: 14px 0;
+}
+.v2-conflict.calm {
+  opacity: 0.85;
+}
+.v2-pieces {
+  list-style: none;
+  padding: 0;
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: #66736c;
+}
+.v2-pieces li.done {
+  color: #28644a;
+}
+.v2-testgroup summary {
+  cursor: pointer;
+}
+.v2-testcase {
+  border-top: 1px solid #e3e8e5;
+  padding: 12px 0;
+}
+.v2-issue {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 0;
+  flex-wrap: wrap;
+}
+.v2-process em.hot {
+  font-weight: 700;
+}
+@media (max-width: 640px) {
+  .v2-fact-head {
+    flex-direction: column;
+  }
+}
+
+.v2-fact .v2-actions {
+  margin-top: 10px;
+  align-items: center;
+}
+.v2-fact .v2-actions input {
+  flex: 1 1 220px;
+  max-width: 340px;
+}
