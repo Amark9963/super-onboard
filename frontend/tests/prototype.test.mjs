@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   addSource,
+  agentStatus,
   applyDefault,
   assignments,
   consistencyReport,
@@ -18,6 +19,7 @@ import {
   nextActions,
   onboardingSteps,
   prereqItems,
+  publishAgent,
   processCounts,
   readiness,
   recipientsInUse,
@@ -41,6 +43,8 @@ import {
   weeklyCheckIn,
   convertIssue,
 } from "../app/prototype/state.ts";
+import { diffActivity } from "../app/prototype/activity.ts";
+import { phaseProgress, planTasks } from "../app/prototype/plan.ts";
 
 const started = () => createClient(initialState, demoClient);
 const upload = (s, ...ids) => ids.reduce(uploadSource, s);
@@ -365,12 +369,15 @@ test("test results go stale when a fact changes", () => {
   );
 });
 
-test("launch needs prerequisites, configuration and passing tests", () => {
+test("launch needs prerequisites, configuration, a published version and passing tests", () => {
   let s = prepared();
   assert.equal(nextActions(s)[0].id, "configure");
   for (const f of s.facts) s = markConfigured(s, f.id);
-  assert.equal(nextActions(s)[0].id, "tests");
+  assert.equal(nextActions(s)[0].id, "publish");
   assert.equal(currentStep(s).n, 4);
+  assert.equal(testCases(s).length > 0, true);
+  s = publishAgent(s);
+  assert.equal(nextActions(s)[0].id, "tests");
   assert.equal(
     launchChecklist(s).every((c) => c.pass),
     false,
@@ -384,6 +391,22 @@ test("launch needs prerequisites, configuration and passing tests", () => {
   const without = togglePrereq(s, "phone");
   assert.equal(
     launchChecklist(without).find((c) => c.id === "prereqs").pass,
+    false,
+  );
+});
+
+test("publishing locks a version and later changes make the draft diverge", () => {
+  let s = prepared();
+  assert.equal(publishAgent(s), s, "nothing is configured yet");
+  for (const f of s.facts) s = markConfigured(s, f.id);
+  assert.equal(agentStatus(s).label, "Draft");
+  s = publishAgent(s);
+  assert.equal(agentStatus(s).label, "Published v1");
+  assert.equal(publishAgent(s), s, "no changes since publish");
+  s = answer(s, "q-emergency", "Front desk first");
+  assert.equal(agentStatus(s).unpublished, true);
+  assert.equal(
+    launchChecklist(s).find((c) => c.id === "published").pass,
     false,
   );
 });
@@ -414,4 +437,111 @@ test("post-launch issues become test cases once; outputs derive from state", () 
   const csv = exportCsv(started()).trim().split("\n");
   assert.equal(csv.length, 21);
   assert.match(csv[0], /^fact_id,area,fact,lands_in,value/);
+});
+
+// Same as the app: every update goes through diffActivity.
+const track = (s, fn) => diffActivity(s, fn(s));
+
+test("the activity feed records who did what, on which side, without any action knowing about it", () => {
+  let s = track(initialState, () => started());
+  s = track(s, sendDocumentRequest);
+  s = track(s, (x) => uploadSource(x, "sop"));
+  s = track(s, (x) => uploadSource(x, "transcript"));
+  s = track(s, runConsistencyCheck);
+  const texts = s.activity.map((e) => e.text);
+  assert.ok(texts[0].startsWith("Created the onboarding"));
+  const sop = s.activity.find((e) => e.text.includes("operations handbook"));
+  assert.deepEqual([sop.actor.name, sop.actor.side], ["Maya Chen", "customer"]);
+  const call = s.activity.find((e) => e.text.includes("kickoff call"));
+  assert.equal(call.actor.side, "team");
+  assert.ok(
+    s.activity.some(
+      (e) =>
+        e.actor.side === "system" &&
+        e.text.startsWith("Contradiction check: 1 conflict"),
+    ),
+  );
+  assert.ok(
+    s.activity.some(
+      (e) =>
+        e.actor.side === "system" &&
+        e.text.startsWith("Drafted a question for Maya Chen"),
+    ),
+  );
+  assert.equal(new Set(s.activity.map((e) => e.id)).size, s.activity.length);
+  assert.equal(
+    track(s, (x) => x),
+    s,
+    "no change, no events",
+  );
+});
+
+test("customer answers and repeated test results are logged compactly", () => {
+  let s = track(initialState, () => started());
+  s = track(s, (x) => uploadSource(uploadSource(x, "transcript"), "sop"));
+  s = track(s, runConsistencyCheck);
+  s = track(s, (x) =>
+    updateQuestion(x, "q-emergency", { status: "Ready to send" }),
+  );
+  s = track(s, (x) => sendRequest(x, "Maya Chen", ["q-emergency"]));
+  s = track(s, (x) =>
+    submitAnswer(x, "q-emergency", "On-call first", "answer"),
+  );
+  const answered = s.activity.find((e) => e.kind === "answer");
+  assert.deepEqual(
+    [answered.actor.name, answered.actor.side],
+    ["Maya Chen", "customer"],
+  );
+  s = track(s, (x) => reviewAnswer(x, "q-emergency"));
+  assert.ok(s.activity.some((e) => e.kind === "approve"));
+  let t = prepared();
+  for (const c of testCases(t).slice(0, 4))
+    t = track(t, (x) => recordTest(x, c.id, "Pass"));
+  assert.equal(t.activity.filter((e) => e.kind === "test").length, 1);
+  assert.match(
+    t.activity.find((e) => e.kind === "test").text,
+    /Recorded 4 test results/,
+  );
+});
+
+test("the plan is derived: every task has an owner, and the customer's tasks name a real contact", () => {
+  let s = started();
+  const first = planTasks(s);
+  assert.ok(
+    first.every((t) => t.assignee && ["customer", "team"].includes(t.side)),
+  );
+  assert.equal(first.find((t) => t.id === "p1-request").status, "In progress");
+  assert.deepEqual(
+    phaseProgress(s).map((p) => p.status),
+    ["Current", "Upcoming", "Upcoming", "Upcoming", "Upcoming"],
+  );
+  s = upload(sendDocumentRequest(s), "sop", "scan");
+  const tasks = planTasks(s);
+  assert.equal(tasks.find((t) => t.id === "p2-sop").status, "Done");
+  assert.equal(tasks.find((t) => t.id === "p2-sop").assignee, "Maya Chen");
+  assert.equal(tasks.find((t) => t.id === "p2-scan").status, "Blocked");
+  assert.equal(tasks.find((t) => t.id === "p2-scan").assignee, "Jordan Lee");
+  assert.equal(
+    planTasks(requestReadableCopy(s)).find((t) => t.id === "p2-scan").status,
+    "In progress",
+  );
+  s = runConsistencyCheck(upload(s, "transcript"));
+  const q = planTasks(approveAndSend(s)).find(
+    (t) => t.id === "p3-answer-q-emergency",
+  );
+  assert.deepEqual(
+    [q.side, q.assignee, q.status],
+    ["customer", "Maya Chen", "In progress"],
+  );
+});
+
+test("a finished onboarding shows every phase done", () => {
+  let s = prepared();
+  for (const f of s.facts) s = markConfigured(s, f.id);
+  s = publishAgent(s);
+  for (const t of testCases(s)) s = recordTest(s, t.id, "Pass");
+  const done = phaseProgress(s)
+    .filter((p) => p.n <= 4)
+    .every((p) => p.status === "Done");
+  assert.equal(done, true);
 });

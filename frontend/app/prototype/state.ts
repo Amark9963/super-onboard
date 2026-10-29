@@ -202,7 +202,22 @@ export type PrototypeState = {
   /** sourceRevision at the last consistency check; null means it has never been run. */
   consistencyRun: number | null;
   manualLog: Record<string, number>;
+  /** Everything that happened, newest last. Filled by diffActivity in activity.ts. */
+  activity: ActivityEvent[];
+  clock: number;
+  agentVersions: AgentVersion[];
+  /** Sum of fact revisions when the last version was published; null before the first publish. */
+  publishedRevSum: number | null;
 };
+
+export type ActivityEvent = {
+  id: number;
+  at: string;
+  actor: { name: string; side: "customer" | "team" | "system" };
+  text: string;
+  kind: string;
+};
+export type AgentVersion = { n: number; at: string; note: string };
 
 export const areas: Area[] = [
   "Goals",
@@ -759,6 +774,10 @@ const freshOnboarding = (): Omit<PrototypeState, "client"> => ({
   sourceRevision: 1,
   consistencyRun: null,
   manualLog: {},
+  activity: [],
+  clock: 0,
+  agentVersions: [],
+  publishedRevSum: null,
 });
 
 export const initialState: PrototypeState = {
@@ -1576,6 +1595,60 @@ export function recordTest(
 export const prereqsDone = (state: PrototypeState) =>
   prereqItems.every((p) => state.prereqs[p.id]);
 
+// ---------------------------------------------------------------------------------------------
+// The agent: a draft built from configured facts, and published versions (draft, then locked)
+// ---------------------------------------------------------------------------------------------
+
+const revSum = (state: PrototypeState) =>
+  state.facts.reduce(
+    (sum, f) => sum + f.rev + (f.lifecycle === "Configured" ? 1000 : 0),
+    0,
+  );
+
+export function agentStatus(state: PrototypeState) {
+  const configurableFacts = state.facts.filter(configurable);
+  const configured = configurableFacts.filter(
+    (f) => f.lifecycle === "Configured",
+  ).length;
+  const published = state.agentVersions.length > 0;
+  const unpublished = published && state.publishedRevSum !== revSum(state);
+  return {
+    configured,
+    total: configurableFacts.length,
+    allConfigured:
+      configurableFacts.length > 0 && configured === configurableFacts.length,
+    published,
+    unpublished,
+    current: published
+      ? state.agentVersions[state.agentVersions.length - 1]
+      : null,
+    label: !published
+      ? "Draft"
+      : unpublished
+        ? "Draft (changes since publish)"
+        : `Published v${state.agentVersions.length}`,
+  };
+}
+export const agentPublished = (state: PrototypeState) => {
+  const s = agentStatus(state);
+  return s.published && !s.unpublished;
+};
+
+/** Lock the draft as the next published version. Only possible once every usable fact is configured. */
+export function publishAgent(
+  state: PrototypeState,
+  note = "Configured from confirmed facts",
+): PrototypeState {
+  const s = agentStatus(state);
+  if (!s.allConfigured || (s.published && !s.unpublished)) return state;
+  const n = state.agentVersions.length + 1;
+  return {
+    ...state,
+    agentVersions: [...state.agentVersions, { n, at: `Version ${n}`, note }],
+    publishedRevSum: revSum(state),
+  };
+}
+
 export function launchChecklist(state: PrototypeState) {
   const status = readiness(state);
   const statuses = testCases(state).map((t) => ({
@@ -1635,6 +1708,12 @@ export function launchChecklist(state: PrototypeState) {
       "Launch prerequisites complete",
       prereqLeft === 0,
       prereqLeft ? `${prereqLeft} remaining.` : "All done.",
+    ),
+    item(
+      "published",
+      "Agent version published, no unpublished changes",
+      agentPublished(state),
+      agentStatus(state).label,
     ),
     item(
       "critical-tests",
@@ -1764,6 +1843,7 @@ export function onboardingSteps(state: PrototypeState): Step[] {
       name: "Configure and test",
       pieces: [
         { label: "Launch prerequisites complete", done: prereqsDone(state) },
+        { label: "Agent version published", done: agentPublished(state) },
         {
           label: "Every usable fact configured",
           done:
@@ -2122,7 +2202,19 @@ export function nextActions(state: PrototypeState): NextAction[] {
     const waiting = testCases(state).filter((t) =>
       ["Not run", "Needs retest", "Fail"].includes(testStatus(state, t)),
     );
-    if (!toConfigure.length && waiting.length)
+    if (!toConfigure.length && !agentPublished(state))
+      a({
+        id: "publish",
+        tone: "orange",
+        icon: "⬆",
+        title: "Publish the agent version",
+        subtitle:
+          "Lock the configured draft so tests run against a fixed version",
+        due: "Before testing",
+        button: "Open stage 4",
+        target: { stage: 4 },
+      });
+    if (!toConfigure.length && agentPublished(state) && waiting.length)
       a({
         id: "tests",
         tone: "orange",

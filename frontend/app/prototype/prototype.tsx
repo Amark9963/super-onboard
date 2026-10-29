@@ -11,42 +11,44 @@ import {
   type Client,
   type PrototypeState,
 } from "./state";
-import Journey from "./journey";
+import { diffActivity } from "./activity";
+import { tabLabels, tabOrder, type Ctx, type View } from "./ui";
+import type { Tab } from "./plan";
+import Workspace from "./workspace";
 import {
-  Assignments,
-  Dashboard,
+  Clients,
+  Inbox,
+  Insights,
   Login,
   NewOnboarding,
   Portal,
-  Process,
-  Requirements,
 } from "./pages";
-import type { Ctx, View } from "./ui";
 
-const views: View[] = [
+const simpleViews: View[] = [
   "login",
-  "dashboard",
+  "inbox",
+  "clients",
   "new",
-  "journey",
-  "spec",
-  "assignments",
-  "process",
+  "insights",
   "portal",
 ];
-const crumb: Record<string, string> = {
-  dashboard: "Dashboard",
-  new: "New onboarding",
-  journey: "Journey",
-  spec: "Requirements",
-  assignments: "Assignments",
-  process: "Process and export",
-};
+
+function parseHash(): { view: View; tab: Tab } | null {
+  const h = window.location.hash.slice(1);
+  if (h.startsWith("client")) {
+    const t = h.split("/")[1] as Tab;
+    return { view: "client", tab: tabOrder.includes(t) ? t : "plan" };
+  }
+  return simpleViews.includes(h as View)
+    ? { view: h as View, tab: "plan" }
+    : null;
+}
 
 export default function Prototype() {
   const [signedIn, setSignedIn] = useState(false);
   const [view, setView] = useState<View>("login");
+  const [tab, setTab] = useState<Tab>("plan");
   const [state, setState] = useState<PrototypeState>(initialState);
-  const [focusFact, setFocusFact] = useState("");
   const [portalName, setPortalName] = useState("");
   const [welcome, setWelcome] = useState(false);
   const [toast, setToast] = useState("");
@@ -56,9 +58,10 @@ export default function Prototype() {
 
   useEffect(() => {
     const read = () => {
-      const route = window.location.hash.slice(1) as View;
-      if (views.includes(route)) {
-        setView(route);
+      const r = parseHash();
+      if (r) {
+        setView(r.view);
+        setTab(r.tab);
         setToast("");
       }
     };
@@ -66,59 +69,38 @@ export default function Prototype() {
     window.addEventListener("hashchange", read);
     return () => window.removeEventListener("hashchange", read);
   }, []);
-  useEffect(() => {
-    if (view === "spec" && focusFact)
-      document
-        .getElementById(`fact-${focusFact}`)
-        ?.scrollIntoView({ block: "center" });
-  }, [view, focusFact]);
 
-  const go = (next: View) => {
+  const go = (next: View, nextTab: Tab = "plan") => {
     setView(next);
-    window.history.replaceState(null, "", `#${next}`);
+    setTab(nextTab);
+    window.history.replaceState(
+      null,
+      "",
+      next === "client" ? `#client/${nextTab}` : `#${next}`,
+    );
     setMenu(false);
     setToast("");
     window.scrollTo(0, 0);
   };
-  const ctx: Ctx = {
-    state,
-    update: setState,
-    flash: setToast,
-    go,
-    setPortalRole: setPortalName,
-    setFocusFact,
-  };
+  // Every update goes through diffActivity, so the activity feed needs no help from the actions.
+  const update: Ctx["update"] = (fn) =>
+    setState((prev) => diffActivity(prev, fn(prev)));
+  const ctx: Ctx = { state, update, flash: setToast, go, setPortalName };
 
   if (!signedIn || view === "login")
     return (
       <Login
         onSignIn={() => {
           setSignedIn(true);
-          go("dashboard");
+          go("inbox");
         }}
       />
     );
 
-  // Customer-side pages need a client; send everyone else back to the dashboard.
-  const needsClient = [
-    "journey",
-    "spec",
-    "assignments",
-    "process",
-    "portal",
-  ].includes(view);
-  if (needsClient && !state.client)
-    return (
-      <Shell>
-        <div className="v2-empty">
-          <h1>Start an onboarding first.</h1>
-          <p>This page appears after you create a client.</p>
-          <button onClick={() => go("new")}>New onboarding</button>
-        </div>
-      </Shell>
-    );
+  const needsClient = view === "client" || view === "portal";
+  const client = state.client;
 
-  if (view === "portal")
+  if (view === "portal" && client)
     return (
       <Portal
         key={resets}
@@ -131,73 +113,51 @@ export default function Prototype() {
   const lateAdded = state.addedSources.includes(LATE_ID);
   const petsSent =
     state.questions.find((q) => q.id === "q-pets")?.status === "Sent";
-  const waiting = assignments(state).filter((a) => a.side === "team").length;
-
-  function Shell({ children }: { children: React.ReactNode }) {
-    return (
-      <div className="v2-app">
-        <main className="v2-content">{children}</main>
-      </div>
-    );
-  }
-
-  function create(client: Client) {
-    setState((s) => createClient(s, client));
-    setWelcome(true);
-    go("journey");
-  }
+  const teamOpen = assignments(state).filter((a) => a.side === "team").length;
 
   return (
-    <div className="v2-app">
-      <aside className={`v2-sidebar ${menu ? "open" : ""}`}>
-        <div className="v2-logo">
-          <div className="v2-logo-icon">so</div>
-          <div>
+    <div className="v3 v3-app">
+      <aside className={`v3-sidebar ${menu ? "open" : ""}`}>
+        <div className="v3-brand">
+          <i className="v3-logo-tile">so</i>
+          <span>
             <strong>super onboard</strong>
             <small>Requirements · Config · Tests</small>
-          </div>
+          </span>
         </div>
         <button
-          className={`v2-side-link ${view === "dashboard" || view === "new" ? "active" : ""}`}
-          onClick={() => go("dashboard")}
+          className={`v3-nav ${view === "inbox" ? "active" : ""}`}
+          onClick={() => go("inbox")}
         >
-          <span>▦</span> Dashboard
+          <span className="ic">✉</span> Inbox{" "}
+          {teamOpen > 0 && <b>{teamOpen}</b>}
         </button>
-        {state.client && view !== "new" && (
-          <>
-            <div className="v2-side-section">{state.client.name}</div>
-            <button
-              className={`v2-side-link ${view === "journey" ? "active" : ""}`}
-              onClick={() => go("journey")}
-            >
-              <span>→</span> Journey {waiting > 0 && <b>{waiting}</b>}
-            </button>
-            <button
-              className={`v2-side-link ${view === "assignments" ? "active" : ""}`}
-              onClick={() => go("assignments")}
-            >
-              <span>☷</span> Assignments
-            </button>
-            <button
-              className={`v2-side-link ${view === "spec" ? "active" : ""}`}
-              onClick={() => go("spec")}
-            >
-              <span>◇</span> Requirements
-            </button>
-            <button
-              className={`v2-side-link ${view === "process" ? "active" : ""}`}
-              onClick={() => go("process")}
-            >
-              <span>↻</span> Process and export
-            </button>
-          </>
+        <button
+          className={`v3-nav ${view === "clients" || view === "new" ? "active" : ""}`}
+          onClick={() => go("clients")}
+        >
+          <span className="ic">▦</span> Clients
+        </button>
+        {client && (
+          <button
+            className={`v3-nav sub ${view === "client" ? "active" : ""}`}
+            onClick={() => go("client", "plan")}
+          >
+            <span className="ic">◆</span> {client.name}
+          </button>
         )}
-        <div className="v2-sidebar-bottom">
-          <span className="v2-avatar">AM</span>
-          <div>
+        <button
+          className={`v3-nav ${view === "insights" ? "active" : ""}`}
+          onClick={() => go("insights")}
+        >
+          <span className="ic">↻</span> Insights
+        </button>
+        <div className="v3-userbox">
+          <Avatar2 />
+          <span>
             <strong>Avery Morgan</strong>
             <button
-              className="v2-link"
+              className="v3-link"
               onClick={() => {
                 setSignedIn(false);
                 go("login");
@@ -205,76 +165,96 @@ export default function Prototype() {
             >
               Sign out
             </button>
-          </div>
+          </span>
         </div>
       </aside>
-      <div className="v2-main-wrap">
-        <header className="v2-topbar">
+      <div className="v3-main">
+        <header className="v3-topbar">
           <button
-            className="v2-mobile-menu"
+            className="v3-menu"
             aria-label="Open navigation"
             onClick={() => setMenu(!menu)}
           >
             ☰
           </button>
-          <div className="v2-breadcrumb">
-            <button onClick={() => go("dashboard")}>Dashboard</button>
-            {view !== "dashboard" && view !== "new" && state.client && (
+          <div className="v3-crumbs">
+            <button onClick={() => go("clients")}>Clients</button>
+            {view === "client" && client && (
               <>
                 <span>/</span>
-                <span>{state.client.name}</span>
+                <button onClick={() => go("client", "plan")}>
+                  {client.name}
+                </button>
+                <span>/</span>
+                <strong>{tabLabels[tab]}</strong>
               </>
             )}
-            {view !== "dashboard" && (
+            {view === "new" && (
               <>
                 <span>/</span>
-                <strong>{crumb[view]}</strong>
+                <strong>New onboarding</strong>
               </>
             )}
+            {view === "inbox" && <strong>Inbox</strong>}
+            {view === "insights" && <strong>Insights</strong>}
           </div>
-          <div className="v2-top-meta">
-            <span className="v2-live-dot" /> Simulated prototype · fictional
-            data
-          </div>
+          <span className="v3-sim">
+            <i /> Simulated prototype · fictional data
+          </span>
         </header>
-        <main className="v2-content" key={resets}>
+        <main className="v3-content" key={resets}>
           {toast && (
-            <div className="v2-toast" role="status">
+            <div className="v3-banner" role="status">
               {toast}
               <button aria-label="Dismiss message" onClick={() => setToast("")}>
                 ×
               </button>
             </div>
           )}
-          {view === "dashboard" && <Dashboard ctx={ctx} />}
-          {view === "new" && <NewOnboarding ctx={ctx} onCreate={create} />}
-          {view === "journey" && (
-            <Journey
+          {needsClient && !client ? (
+            <div className="v3-empty">
+              <h2>Start an onboarding first</h2>
+              <p>This page appears after you create a client.</p>
+              <button className="v3-btn" onClick={() => go("new")}>
+                New onboarding
+              </button>
+            </div>
+          ) : view === "inbox" ? (
+            <Inbox ctx={ctx} />
+          ) : view === "clients" ? (
+            <Clients ctx={ctx} />
+          ) : view === "new" ? (
+            <NewOnboarding
               ctx={ctx}
+              onCreate={(c: Client) => {
+                update((s) => createClient(s, c));
+                setWelcome(true);
+                go("client", "plan");
+              }}
+            />
+          ) : view === "client" ? (
+            <Workspace
+              ctx={ctx}
+              tab={tab}
               welcome={welcome}
               dismissWelcome={() => setWelcome(false)}
             />
+          ) : (
+            <Insights ctx={ctx} />
           )}
-          {view === "assignments" && <Assignments ctx={ctx} />}
-          {view === "spec" && <Requirements ctx={ctx} focusFact={focusFact} />}
-          {view === "process" && <Process ctx={ctx} />}
         </main>
       </div>
 
-      <div className="v2-demo">
+      <div className="v3-demo">
         {tray && (
-          <div
-            className="v2-demo-panel"
-            role="region"
-            aria-label="Demo controls"
-          >
+          <div className="panel" role="region" aria-label="Demo controls">
             <strong>Demo controls</strong>
             <p>These simulate things that happen outside the app.</p>
             <button
-              className="v2-button secondary"
-              disabled={lateAdded || !state.client}
+              className="v3-btn secondary"
+              disabled={lateAdded || !client}
               onClick={() => {
-                setState(addSource);
+                update(addSource);
                 setToast(
                   "A late email arrived from the customer. It was read into the spec and the earlier contradiction check is now out of date.",
                 );
@@ -283,10 +263,10 @@ export default function Prototype() {
               {lateAdded ? "Late email received" : "A late email arrives"}
             </button>
             <button
-              className="v2-button secondary"
+              className="v3-btn secondary"
               disabled={!petsSent}
               onClick={() => {
-                setState((s) => applyDefault(s, "q-pets"));
+                update((s) => applyDefault(s, "q-pets"));
                 setToast(
                   "Deadline passed with no reply: proceeding on the default and flagging it as unconfirmed.",
                 );
@@ -295,12 +275,12 @@ export default function Prototype() {
               Deadline passes with no reply
             </button>
             <button
-              className="v2-button secondary"
+              className="v3-btn secondary"
               onClick={() => {
                 setState(initialState);
                 setResets((r) => r + 1);
                 setWelcome(false);
-                go("dashboard");
+                go("clients");
                 setToast("Demo reset to the starting state.");
               }}
             >
@@ -309,7 +289,7 @@ export default function Prototype() {
           </div>
         )}
         <button
-          className="v2-demo-toggle"
+          className="toggle"
           onClick={() => setTray(!tray)}
           aria-expanded={tray}
         >
@@ -318,4 +298,8 @@ export default function Prototype() {
       </div>
     </div>
   );
+}
+
+function Avatar2() {
+  return <i className="v3-avatar team">AM</i>;
 }

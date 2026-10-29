@@ -1,30 +1,18 @@
 "use client";
 
-import {
-  coverageOf,
-  isConfirmed,
-  type PrototypeState,
-  type Step,
-} from "./state";
+import { coverageOf, isConfirmed, type PrototypeState } from "./state";
+import { phaseProgress, type Tab, type TaskStatus } from "./plan";
 
 export type View =
-  | "login"
-  | "dashboard"
-  | "new"
-  | "journey"
-  | "spec"
-  | "assignments"
-  | "process"
-  | "portal";
+  "login" | "inbox" | "clients" | "new" | "client" | "insights" | "portal";
 
 /** What every screen needs from the shell. */
 export type Ctx = {
   state: PrototypeState;
   update: (fn: (s: PrototypeState) => PrototypeState) => void;
   flash: (message: string) => void;
-  go: (view: View) => void;
-  setPortalRole: (name: string) => void;
-  setFocusFact: (id: string) => void;
+  go: (view: View, tab?: Tab) => void;
+  setPortalName: (name: string) => void;
 };
 
 const GREEN = [
@@ -36,6 +24,8 @@ const GREEN = [
   "Resolved",
   "Received",
   "Known",
+  "Done",
+  "Published",
 ];
 const AMBER = [
   "Needs clarification",
@@ -43,9 +33,11 @@ const AMBER = [
   "Defaulted",
   "Needs a readable copy",
   "Disputed",
+  "In progress",
+  "Draft",
 ];
-const RED = ["Not received", "Fail", "Missing"];
-const GRAY = ["Not reviewed", "Not run", "Waived"];
+const RED = ["Not received", "Fail", "Missing", "Blocked"];
+const GRAY = ["Not reviewed", "Not run", "Waived", "To do"];
 
 export const tone = (s: string) =>
   GREEN.includes(s)
@@ -75,9 +67,25 @@ export function Tag({
   kind?: string;
 }) {
   return (
-    <span className={`v2-tag ${kind ?? tone(String(children))}`}>
+    <span className={`v3-tag ${kind ?? tone(String(children))}`}>
       {children}
     </span>
+  );
+}
+
+type Side = "customer" | "team" | "system";
+const initials = (name: string) =>
+  name
+    .split(" ")
+    .map((p) => p[0])
+    .join("")
+    .slice(0, 2);
+
+export function Avatar({ name, side }: { name: string; side: Side }) {
+  return (
+    <i className={`v3-avatar ${side}`}>
+      {side === "system" ? "⚙" : initials(name)}
+    </i>
   );
 }
 
@@ -86,26 +94,48 @@ export function Person({
   name,
   role,
   side,
+  compact,
 }: {
   name: string;
   role?: string;
-  side: "customer" | "team";
+  side: Side;
+  compact?: boolean;
 }) {
-  const initials = name
-    .split(" ")
-    .map((p) => p[0])
-    .join("")
-    .slice(0, 2);
   return (
-    <span className={`v2-person ${side}`}>
-      <i>{initials}</i>
+    <span className="v3-person">
+      <Avatar name={name} side={side} />
       <span>
         <strong>{name}</strong>
-        <small>
-          {side === "customer" ? "Customer" : "Our team"}
-          {role ? ` · ${role}` : ""}
-        </small>
+        {!compact && (
+          <small>
+            {side === "customer"
+              ? "Customer"
+              : side === "team"
+                ? "Our team"
+                : "Automatic"}
+            {role ? ` · ${role}` : ""}
+          </small>
+        )}
       </span>
+    </span>
+  );
+}
+
+export const statusIcon: Record<TaskStatus, string> = {
+  Done: "✓",
+  "In progress": "◐",
+  "To do": "○",
+  Blocked: "!",
+};
+
+export function StatusDot({ status }: { status: TaskStatus }) {
+  return (
+    <span
+      className={`v3-statusdot ${tone(status)}`}
+      title={status}
+      aria-label={status}
+    >
+      {statusIcon[status]}
     </span>
   );
 }
@@ -124,15 +154,15 @@ export function CoverageBar({ state }: { state: PrototypeState }) {
   };
   const items: [keyof typeof seg, string][] = [
     ["confirmed", "Customer-confirmed"],
-    ["known", "Known, not yet confirmed"],
+    ["known", "Known"],
     ["clarifying", "Being clarified"],
     ["waived", "Waived"],
     ["empty", "Not received"],
   ];
   return (
-    <div className="v2-coverage">
+    <div className="v3-coverage">
       <div
-        className="v2-bar"
+        className="v3-bar"
         role="img"
         aria-label={`${seg.confirmed + seg.known} of ${facts.length} required facts known`}
       >
@@ -142,7 +172,7 @@ export function CoverageBar({ state }: { state: PrototypeState }) {
           ) : null,
         )}
       </div>
-      <ul className="v2-legend">
+      <ul className="v3-legend">
         {items.map(([k, label]) => (
           <li key={k}>
             <i className={`seg ${k}`} /> {seg[k]} {label.toLowerCase()}
@@ -153,52 +183,62 @@ export function CoverageBar({ state }: { state: PrototypeState }) {
   );
 }
 
-/** The five stages as a connected pipeline. */
-export function Stepper({
-  steps,
-  active,
-  onSelect,
-}: {
-  steps: Step[];
-  active: number;
-  onSelect?: (n: number) => void;
-}) {
+/** The five phases as a segmented progress bar with counts. */
+export function PhaseBar({ state }: { state: PrototypeState }) {
+  const phases = phaseProgress(state);
   return (
-    <ol className="v2-stepper" aria-label="Onboarding stages">
-      {steps.map((s) => {
-        const body = (
-          <>
-            <span className="node">{s.status === "Done" ? "✓" : s.n}</span>
-            <span className="label">
-              <strong>{s.name}</strong>
-              <small>
-                {s.status === "Done"
-                  ? "Done"
-                  : s.status === "Current"
-                    ? s.detail
-                    : "Locked"}
-              </small>
-            </span>
-          </>
-        );
-        return (
-          <li
-            key={s.n}
-            className={`${s.status.toLowerCase()} ${active === s.n ? "active" : ""}`}
-          >
-            {onSelect ? (
-              <button
-                onClick={() => onSelect(s.n)}
-                aria-current={active === s.n ? "step" : undefined}
-              >
-                {body}
-              </button>
-            ) : (
-              <div>{body}</div>
-            )}
-          </li>
-        );
-      })}
+    <ol className="v3-phasebar" aria-label="Onboarding phases">
+      {phases.map((p) => (
+        <li key={p.n} className={p.status.toLowerCase()}>
+          <span
+            className="fill"
+            style={{ width: `${p.total ? (p.done / p.total) * 100 : 0}%` }}
+          />
+          <strong>{p.name}</strong>
+          <small>
+            {p.status === "Upcoming"
+              ? "Not started"
+              : `${p.done} of ${p.total} done`}
+          </small>
+        </li>
+      ))}
     </ol>
   );
 }
+
+export function Empty({
+  title,
+  children,
+  action,
+}: {
+  title: string;
+  children?: React.ReactNode;
+  action?: React.ReactNode;
+}) {
+  return (
+    <div className="v3-empty">
+      <h2>{title}</h2>
+      {children && <p>{children}</p>}
+      {action}
+    </div>
+  );
+}
+
+export const tabLabels: Record<Tab, string> = {
+  plan: "Plan",
+  documents: "Documents",
+  clarifications: "Clarifications",
+  requirements: "Requirements",
+  agent: "Agent",
+  tests: "Tests",
+  activity: "Activity",
+};
+export const tabOrder: Tab[] = [
+  "plan",
+  "documents",
+  "clarifications",
+  "requirements",
+  "agent",
+  "tests",
+  "activity",
+];

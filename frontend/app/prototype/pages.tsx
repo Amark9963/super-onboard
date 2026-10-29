@@ -4,91 +4,83 @@ import { useState } from "react";
 import {
   AUTOMATION_THRESHOLD,
   OWNER,
-  allSources,
   areas,
   assignments,
-  configurable,
-  consistencyReport,
   contactByName,
-  coverageOf,
-  currentStep,
   demoClient,
   exportCsv,
   exportJson,
-  isConfirmed,
-  markConfigured,
   nextActions,
-  onboardingSteps,
   processCounts,
-  reviewFact,
-  routingTable,
   sentQuestionIds,
-  shownLifecycle,
-  shownValue,
   stageDays,
   submitAnswer,
-  testCases,
-  testStatus,
   topics,
-  waiveFact,
+  uploadSource,
   type Client,
   type Contact,
-  type Fact,
-  type PrototypeState,
   type Question,
   type Topic,
 } from "./state";
-import { Person, Stepper, Tag, download, type Ctx } from "./ui";
+import { phaseNames, phaseProgress, planTasks } from "./plan";
+import {
+  Avatar,
+  Empty,
+  Person,
+  StatusDot,
+  Tag,
+  download,
+  type Ctx,
+} from "./ui";
 
 /* ------------------------------------------------------------------ login */
 export function Login({ onSignIn }: { onSignIn: () => void }) {
   return (
-    <div className="v2-login">
-      <div className="v2-login-side">
-        <div className="v2-logo-icon">so</div>
+    <div className="v3 v3-login">
+      <div className="side">
+        <i className="v3-logo-tile">so</i>
         <h1>
           Keep requirements, configuration and tests linked from kickoff to
           go-live.
         </h1>
         <ul>
           <li>
-            Upload the customer’s documents and see what the agent needs to
-            know.
+            Upload a customer’s documents and see what the agent needs to know.
           </li>
           <li>Catch contradictions before the customer does.</li>
           <li>
-            Ask the right person once, and always know who it’s waiting on.
+            Ask the right person once, and always know who it is waiting on.
           </li>
         </ul>
-        <p className="v2-muted">
+        <p className="v3-muted">
           Independent prototype with fictional data. Not affiliated with any
           voice-agent vendor.
         </p>
       </div>
       <form
-        className="v2-login-card"
+        className="card"
         onSubmit={(e) => {
           e.preventDefault();
           onSignIn();
         }}
       >
         <h2>Sign in</h2>
-        <p className="v2-muted">
+        <p className="v3-muted">
           Simulated sign-in for the demo. No account is created and nothing
           leaves your browser.
         </p>
-        <label className="v2-field">
+        <label className="v3-field">
           Email
           <input type="email" defaultValue="avery.morgan@example.invalid" />
         </label>
-        <label className="v2-field">
+        <label className="v3-field">
           Password
           <input type="password" defaultValue="demo-password" />
         </label>
-        <button className="v2-button" type="submit">
+        <button className="v3-btn block" type="submit">
           Sign in
         </button>
-        <p className="v2-muted">
+        <p className="v3-muted">
           Signing in as Avery Morgan, onboarding specialist.
         </p>
       </form>
@@ -96,67 +88,154 @@ export function Login({ onSignIn }: { onSignIn: () => void }) {
   );
 }
 
-/* ------------------------------------------------------------------ dashboard */
-export function Dashboard({ ctx }: { ctx: Ctx }) {
+/* ------------------------------------------------------------------ inbox */
+export function Inbox({ ctx }: { ctx: Ctx }) {
   const { state, go } = ctx;
-  const client = state.client;
-  const step = currentStep(state);
-  const all = assignments(state);
-  const waiting = all.filter((a) => a.side === "customer");
-  const mine = all.filter((a) => a.side === "team");
-  const report = consistencyReport(state);
+  if (!state.client)
+    return (
+      <Empty
+        title="Your inbox is clear"
+        action={
+          <button className="v3-btn" onClick={() => go("new")}>
+            Start an onboarding
+          </button>
+        }
+      >
+        Tasks that need you, and customer replies, appear here once an
+        onboarding is running.
+      </Empty>
+    );
+  const tasks = planTasks(state);
+  const phase =
+    phaseProgress(state).find((p) => p.status === "Current")?.n ?? 5;
+  const mine = tasks
+    .filter((t) => t.side === "team" && t.status !== "Done" && t.phase <= phase)
+    .slice(0, 7);
+  const waiting = tasks
+    .filter((t) => t.side === "customer" && t.status !== "Done")
+    .slice(0, 6);
+  const recent = [...state.activity].reverse().slice(0, 7);
   return (
     <>
-      <div className="v2-page-head">
+      <div className="v3-pagehead">
         <div>
-          <p className="v2-eyebrow">Dashboard</p>
-          <h1>Onboardings</h1>
-          <p className="v2-muted">
-            Every client from kickoff to go-live, and who each open item is
+          <h1>Inbox</h1>
+          <p className="v3-muted">
+            What needs you, what is waiting on the customer, and what just
+            happened.
+          </p>
+        </div>
+      </div>
+      <div className="v3-split">
+        <div>
+          <section className="v3-card">
+            <h3>Needs your attention</h3>
+            {mine.length === 0 && (
+              <p className="v3-muted">Nothing needs you right now.</p>
+            )}
+            {mine.map((t) => (
+              <div className="v3-task" key={t.id}>
+                <StatusDot status={t.status} />
+                <span className="title">
+                  {t.title}
+                  <small className="v3-muted block">{state.client!.name}</small>
+                </span>
+                <span className="side" />
+                <span className="due">{t.due}</span>
+                <button className="v3-link" onClick={() => go("client", t.tab)}>
+                  Open
+                </button>
+              </div>
+            ))}
+          </section>
+          <section className="v3-card">
+            <h3>Waiting on the customer</h3>
+            {waiting.length === 0 && (
+              <p className="v3-muted">Nothing is waiting on the customer.</p>
+            )}
+            {waiting.map((t) => (
+              <div className="v3-task" key={t.id}>
+                <StatusDot status={t.status} />
+                <span className="title">{t.title}</span>
+                <Person
+                  name={t.assignee}
+                  role={t.role}
+                  side="customer"
+                  compact
+                />
+                <span className="due">{t.due}</span>
+                <button className="v3-link" onClick={() => go("client", t.tab)}>
+                  Open
+                </button>
+              </div>
+            ))}
+          </section>
+        </div>
+        <aside className="v3-side">
+          <section className="v3-card">
+            <h3>Recent activity</h3>
+            {recent.length === 0 && <p className="v3-muted">Nothing yet.</p>}
+            {recent.map((e) => (
+              <div className="v3-event" key={e.id}>
+                <Avatar name={e.actor.name} side={e.actor.side} />
+                <span className="text">
+                  <strong>{e.actor.name}</strong> {e.text}
+                </span>
+                <small className="v3-muted">{e.at}</small>
+              </div>
+            ))}
+            <button
+              className="v3-link"
+              onClick={() => go("client", "activity")}
+            >
+              See all activity →
+            </button>
+          </section>
+        </aside>
+      </div>
+    </>
+  );
+}
+
+/* ------------------------------------------------------------------ clients */
+export function Clients({ ctx }: { ctx: Ctx }) {
+  const { state, go } = ctx;
+  const client = state.client;
+  const waiting = assignments(state).filter((a) => a.side === "customer");
+  const people = [...new Set(waiting.map((w) => w.assignee))];
+  const phases = phaseProgress(state);
+  const next = nextActions(state)[0];
+  return (
+    <>
+      <div className="v3-pagehead">
+        <div>
+          <h1>Clients</h1>
+          <p className="v3-muted">
+            Every onboarding from kickoff to go-live, and who each one is
             waiting on.
           </p>
         </div>
-        <button className="v2-button" onClick={() => go("new")}>
+        <button className="v3-btn" onClick={() => go("new")}>
           ＋ New onboarding
         </button>
       </div>
-      {client && (
-        <div className="v2-metrics">
-          <div>
-            <strong>{step.n} of 5</strong>
-            <span>Oakwood: current stage</span>
-          </div>
-          <div>
-            <strong>{waiting.length}</strong>
-            <span>Items waiting on the customer</span>
-          </div>
-          <div>
-            <strong>{report.open.length}</strong>
-            <span>Open conflicts</span>
-          </div>
-          <div>
-            <strong>{mine.length}</strong>
-            <span>Items on our team</span>
-          </div>
-        </div>
-      )}
       {!client && (
-        <section className="v2-card v2-start">
+        <section className="v3-card v3-start">
           <h3>No live onboarding yet</h3>
-          <p className="v2-muted">
+          <p className="v3-muted">
             Start one to see the whole journey: client details, documents,
             contradictions, clarifications, setup and go-live.
           </p>
-          <button className="v2-button" onClick={() => go("new")}>
+          <button className="v3-btn" onClick={() => go("new")}>
             Start an onboarding
           </button>
         </section>
       )}
-      <table className="v2-table v2-clients">
+      <table className="v3-table v3-clients">
         <thead>
           <tr>
             <th>Client</th>
-            <th>Stage</th>
+            <th>Progress</th>
             <th>Waiting on</th>
             <th>Next step</th>
             <th>Go-live</th>
@@ -166,84 +245,92 @@ export function Dashboard({ ctx }: { ctx: Ctx }) {
           {client && (
             <tr
               className="link"
-              onClick={() => go("journey")}
+              onClick={() => go("client", "plan")}
               tabIndex={0}
-              onKeyDown={(e) => e.key === "Enter" && go("journey")}
+              onKeyDown={(e) => e.key === "Enter" && go("client", "plan")}
             >
               <td>
                 <strong>{client.name}</strong>
-                <small className="v2-muted v2-block">
+                <small className="v3-muted block">
                   {client.plan} plan · {client.owner}
                 </small>
               </td>
               <td>
-                <Tag kind="blue">
-                  {step.n} of 5 · {step.name}
-                </Tag>
+                <span className="v3-mini" aria-label="Phase progress">
+                  {phases.map((p) => (
+                    <i key={p.n} className={p.status.toLowerCase()} />
+                  ))}
+                </span>
+                <small className="v3-muted block">
+                  {phases.find((p) => p.status === "Current")?.name ??
+                    "Go live and tune"}
+                </small>
               </td>
               <td>
-                {waiting.length
-                  ? `${new Set(waiting.map((w) => w.assignee)).size} customer contact${new Set(waiting.map((w) => w.assignee)).size === 1 ? "" : "s"}`
-                  : "Our team"}
+                {people.length ? (
+                  people.map((p) => <Avatar key={p} name={p} side="customer" />)
+                ) : (
+                  <span className="v3-muted">Our team</span>
+                )}
               </td>
-              <td>{nextActions(state)[0]?.title ?? "Nothing waiting"}</td>
+              <td>{next ? next.title : "Nothing waiting"}</td>
               <td>{client.goLive}</td>
             </tr>
           )}
           <tr className="static">
             <td>
               <strong>Birchwood Apartments</strong>
-              <small className="v2-muted v2-block">
+              <small className="v3-muted block">
                 Illustrative · 24/7 plan · Sam Rivera
               </small>
             </td>
             <td>
-              <Tag kind="gray">1 of 5 · Kickoff and client details</Tag>
+              <span className="v3-mini">
+                <i className="current" />
+                <i className="upcoming" />
+                <i className="upcoming" />
+                <i className="upcoming" />
+                <i className="upcoming" />
+              </span>
+              <small className="v3-muted block">
+                Kickoff and client details
+              </small>
             </td>
-            <td>Our team</td>
+            <td>
+              <span className="v3-muted">Our team</span>
+            </td>
             <td>Run the kickoff call (Nov 3)</td>
             <td>Dec 4, 2026</td>
           </tr>
           <tr className="static">
             <td>
               <strong>Cedar &amp; Pine Realty</strong>
-              <small className="v2-muted v2-block">
+              <small className="v3-muted block">
                 Illustrative · After Hours plan · Sam Rivera
               </small>
             </td>
             <td>
-              <Tag kind="green">5 of 5 · Live, week 2</Tag>
+              <span className="v3-mini">
+                <i className="done" />
+                <i className="done" />
+                <i className="done" />
+                <i className="done" />
+                <i className="current" />
+              </span>
+              <small className="v3-muted block">Live, week 2</small>
             </td>
-            <td>Nobody</td>
+            <td>
+              <span className="v3-muted">Nobody</span>
+            </td>
             <td>Weekly review on Friday</td>
             <td>Live</td>
           </tr>
         </tbody>
       </table>
-      <p className="v2-muted">
+      <p className="v3-muted">
         Only the onboarding you start is a working example. The other rows are
         illustrative and fictional.
       </p>
-      {client && waiting.length > 0 && (
-        <section className="v2-card">
-          <div className="v2-card-head">
-            <h3>Waiting on the customer</h3>
-            <button className="v2-link" onClick={() => go("assignments")}>
-              See all assignments →
-            </button>
-          </div>
-          {waiting.slice(0, 5).map((a) => (
-            <div className="v2-assign" key={a.id}>
-              <span>
-                <strong>{a.title}</strong>
-                <small className="v2-muted v2-block">{a.detail}</small>
-              </span>
-              <Person name={a.assignee} role={a.role} side="customer" />
-              <small className="v2-muted">{a.due}</small>
-            </div>
-          ))}
-        </section>
-      )}
     </>
   );
 }
@@ -290,21 +377,15 @@ export function NewOnboarding({
     name.trim() &&
     properties.length > 0 &&
     contacts.every((c) => c.name.trim());
+  const setC = (i: number, patch: Partial<Contact>) =>
+    setContacts(contacts.map((x, idx) => (idx === i ? { ...x, ...patch } : x)));
+  const toggleTopic = (i: number, t: Topic) =>
+    setC(i, {
+      decides: contacts[i].decides.includes(t)
+        ? contacts[i].decides.filter((x) => x !== t)
+        : [...contacts[i].decides, t],
+    });
 
-  function toggleTopic(i: number, t: Topic) {
-    setContacts(
-      contacts.map((c, idx) =>
-        idx !== i
-          ? c
-          : {
-              ...c,
-              decides: c.decides.includes(t)
-                ? c.decides.filter((x) => x !== t)
-                : [...c.decides, t],
-            },
-      ),
-    );
-  }
   function build(): Client {
     const units = properties.reduce((sum, p) => sum + p.units, 0);
     return {
@@ -322,19 +403,18 @@ export function NewOnboarding({
 
   return (
     <>
-      <button className="v2-link" onClick={() => go("dashboard")}>
-        ← Dashboard
+      <button className="v3-link" onClick={() => go("clients")}>
+        ← Clients
       </button>
-      <div className="v2-page-head">
+      <div className="v3-pagehead">
         <div>
-          <p className="v2-eyebrow">New onboarding</p>
-          <h1>Start an onboarding</h1>
-          <p className="v2-muted">
+          <h1>New onboarding</h1>
+          <p className="v3-muted">
             Prefilled with fictional demo data. Edit anything.
           </p>
         </div>
       </div>
-      <ol className="v2-wizard">
+      <ol className="v3-wizard">
         {labels.map((l, i) => (
           <li
             key={l}
@@ -345,20 +425,20 @@ export function NewOnboarding({
         ))}
       </ol>
       {n === 1 && (
-        <section className="v2-card">
-          <div className="v2-formgrid">
-            <label className="v2-field">
+        <section className="v3-card">
+          <div className="v3-formgrid">
+            <label className="v3-field">
               Company
               <input value={name} onChange={(e) => setName(e.target.value)} />
             </label>
-            <label className="v2-field">
+            <label className="v3-field">
               Vertical
               <input
                 value={vertical}
                 onChange={(e) => setVertical(e.target.value)}
               />
             </label>
-            <label className="v2-field">
+            <label className="v3-field">
               Plan
               <select
                 value={plan}
@@ -369,14 +449,14 @@ export function NewOnboarding({
                 ))}
               </select>
             </label>
-            <label className="v2-field">
+            <label className="v3-field">
               Go-live target
               <input
                 value={goLive}
                 onChange={(e) => setGoLive(e.target.value)}
               />
             </label>
-            <label className="v2-field wide">
+            <label className="v3-field wide">
               Properties (one per line: name, units)
               <textarea
                 value={propText}
@@ -387,60 +467,42 @@ export function NewOnboarding({
         </section>
       )}
       {n === 2 && (
-        <section className="v2-card">
-          <p className="v2-muted">
+        <section className="v3-card">
+          <p className="v3-muted">
             Who on the customer’s side will answer us, and what do they decide?
-            Questions and document requests are assigned to the person who
-            decides the topic.
+            Questions and document requests go to the person who decides the
+            topic.
           </p>
           {contacts.map((c, i) => (
-            <div className="v2-contactedit" key={i}>
-              <div className="v2-formgrid">
-                <label className="v2-field">
+            <div className="v3-contactedit" key={i}>
+              <div className="v3-formgrid">
+                <label className="v3-field">
                   Name
                   <input
                     value={c.name}
-                    onChange={(e) =>
-                      setContacts(
-                        contacts.map((x, idx) =>
-                          idx === i ? { ...x, name: e.target.value } : x,
-                        ),
-                      )
-                    }
+                    onChange={(e) => setC(i, { name: e.target.value })}
                   />
                 </label>
-                <label className="v2-field">
+                <label className="v3-field">
                   Role
                   <input
                     value={c.role}
-                    onChange={(e) =>
-                      setContacts(
-                        contacts.map((x, idx) =>
-                          idx === i ? { ...x, role: e.target.value } : x,
-                        ),
-                      )
-                    }
+                    onChange={(e) => setC(i, { role: e.target.value })}
                   />
                 </label>
-                <label className="v2-field wide">
+                <label className="v3-field wide">
                   Email
                   <input
                     value={c.email}
-                    onChange={(e) =>
-                      setContacts(
-                        contacts.map((x, idx) =>
-                          idx === i ? { ...x, email: e.target.value } : x,
-                        ),
-                      )
-                    }
+                    onChange={(e) => setC(i, { email: e.target.value })}
                   />
                 </label>
               </div>
-              <div className="v2-choices">
+              <div className="v3-chips">
                 {topics.map((t) => (
                   <label
                     key={t.id}
-                    className={`v2-chip ${c.decides.includes(t.id) ? "selected" : ""}`}
+                    className={`v3-chip ${c.decides.includes(t.id) ? "on" : ""}`}
                   >
                     <input
                       type="checkbox"
@@ -455,19 +517,19 @@ export function NewOnboarding({
             </div>
           ))}
           {uncovered.length > 0 && (
-            <p className="v2-warn">
+            <p className="v3-warn">
               No one decides:{" "}
               {uncovered.map((t) => t.label.toLowerCase()).join(", ")}. Those
-              items will fall back to the first contact.
+              items fall back to the first contact.
             </p>
           )}
         </section>
       )}
       {n === 3 && (
-        <div className="v2-grid2">
-          <section className="v2-card">
+        <div className="v3-grid2">
+          <section className="v3-card">
             <h3>{name || "Client"}</h3>
-            <p className="v2-muted">
+            <p className="v3-muted">
               {vertical} · {plan} plan · go-live {goLive}
             </p>
             {properties.map((p) => (
@@ -479,7 +541,7 @@ export function NewOnboarding({
             {contacts.map((c) => (
               <p key={c.name}>
                 <strong>{c.name}</strong> · {c.role}
-                <small className="v2-muted v2-block">
+                <small className="v3-muted block">
                   Decides:{" "}
                   {c.decides
                     .map((d) => topics.find((t) => t.id === d)?.label)
@@ -488,32 +550,30 @@ export function NewOnboarding({
               </p>
             ))}
           </section>
-          <section className="v2-card">
+          <section className="v3-card">
             <h3>What gets created</h3>
-            <p className="v2-muted">
-              A voice-agent onboarding with an empty spec of 20 required facts
-              in five areas:
+            <p className="v3-muted">
+              A voice-agent onboarding with an empty spec of 20 required facts,
+              and a plan with five phases:
             </p>
-            {areas.map((a) => (
-              <p key={a}>
-                <strong>{a}</strong>
+            {phaseNames.map((p, i) => (
+              <p key={p}>
+                {i + 1}. {p}
               </p>
             ))}
-            <p className="v2-muted">
-              Next: send the document request, then upload what arrives.
-            </p>
+            <p className="v3-muted">Areas: {areas.join(", ")}.</p>
           </section>
         </div>
       )}
-      <div className="v2-actions">
+      <div className="v3-actions">
         {n > 1 && (
-          <button className="v2-button secondary" onClick={() => setN(n - 1)}>
+          <button className="v3-btn secondary" onClick={() => setN(n - 1)}>
             Back
           </button>
         )}
         {n < 3 ? (
           <button
-            className="v2-button"
+            className="v3-btn"
             disabled={n === 1 && !(name.trim() && properties.length)}
             onClick={() => setN(n + 1)}
           >
@@ -521,7 +581,7 @@ export function NewOnboarding({
           </button>
         ) : (
           <button
-            className="v2-button"
+            className="v3-btn"
             disabled={!valid}
             onClick={() => onCreate(build())}
           >
@@ -533,314 +593,23 @@ export function NewOnboarding({
   );
 }
 
-/* ------------------------------------------------------------------ assignments */
-export function Assignments({ ctx }: { ctx: Ctx }) {
-  const { state, go } = ctx;
-  const all = assignments(state);
-  const customer = all.filter((a) => a.side === "customer");
-  const people = [...new Set(customer.map((a) => a.assignee))];
-  const team = all.filter((a) => a.side === "team");
-  return (
-    <>
-      <div className="v2-page-head">
-        <div>
-          <p className="v2-eyebrow">{state.client?.name}</p>
-          <h1>Assignments</h1>
-          <p className="v2-muted">
-            Every open item, and the person it is waiting on.
-          </p>
-        </div>
-      </div>
-      <section className="v2-card">
-        <h3>Waiting on the customer</h3>
-        {people.length === 0 && (
-          <p className="v2-muted">
-            Nothing is waiting on the customer yet. Send the document request in
-            stage 1.
-          </p>
-        )}
-        {people.map((p) => (
-          <div className="v2-person-group" key={p}>
-            <Person
-              name={p}
-              role={contactByName(state, p)?.role}
-              side="customer"
-            />
-            {customer
-              .filter((a) => a.assignee === p)
-              .map((a) => (
-                <div className="v2-assign" key={a.id}>
-                  <span>
-                    <strong>{a.title}</strong>
-                    <small className="v2-muted v2-block">{a.detail}</small>
-                  </span>
-                  <small className="v2-muted">{a.due}</small>
-                </div>
-              ))}
-          </div>
-        ))}
-      </section>
-      <section className="v2-card">
-        <h3>On our team</h3>
-        {team.length === 0 && (
-          <p className="v2-muted">Nothing needs us right now.</p>
-        )}
-        {team.map((a) => (
-          <div className="v2-assign" key={a.id}>
-            <span>
-              <strong>{a.title}</strong>
-              <small className="v2-muted v2-block">{a.detail}</small>
-            </span>
-            <Person name={a.assignee} role={a.role} side="team" />
-            <small className="v2-muted">{a.due}</small>
-          </div>
-        ))}
-        <button className="v2-link" onClick={() => go("journey")}>
-          Open the journey →
-        </button>
-      </section>
-    </>
-  );
-}
-
-/* ------------------------------------------------------------------ requirements table */
-function FactRow({
-  state,
-  f,
-  focused,
-  onReview,
-  onConfigure,
-  waive,
-}: {
-  state: PrototypeState;
-  f: Fact;
-  focused: boolean;
-  onReview: () => void;
-  onConfigure: () => void;
-  waive: (reason: string) => void;
-}) {
-  const [reason, setReason] = useState("");
-  const life = f.waived ? "Waived" : shownLifecycle(state, f);
-  const value = shownValue(f);
-  const mine = testCases(state).filter((t) => t.factId === f.id);
-  const passing = mine.filter((t) => testStatus(state, t) === "Pass").length;
-  const canReview =
-    f.value !== null &&
-    f.approval === "Not reviewed" &&
-    f.lifecycle !== "Needs clarification";
-  const canConfigure =
-    configurable(f) &&
-    f.lifecycle !== "Configured" &&
-    (!f.critical || isConfirmed(f));
-  const canWaive = coverageOf(f) === "empty" && !f.critical;
-  const source = f.sourceId
-    ? allSources(state).find((s) => s.id === f.sourceId)?.title
-    : null;
-  return (
-    <div
-      id={`fact-${f.id}`}
-      className={`v2-fact ${coverageOf(f) === "empty" ? "gap" : ""} ${focused ? "focused" : ""}`}
-    >
-      <div className="v2-fact-label">
-        <strong>
-          <span className="v2-fact-id">{f.id}</span> {f.label}
-        </strong>
-        {f.critical && <Tag kind="red">Critical</Tag>}
-        <small>Lands in: {f.lands}</small>
-      </div>
-      <div className="v2-fact-body">
-        {value ? (
-          <p className="v2-fact-value">{value}</p>
-        ) : (
-          <p className="v2-fact-value gap">Not received yet.</p>
-        )}
-        {f.customerAnswer && f.customerAnswer.value !== f.value && (
-          <p className="v2-muted">Customer answer: {f.customerAnswer.value}</p>
-        )}
-        {f.note && <p className="v2-muted">{f.note}</p>}
-        {f.waived && (
-          <p className="v2-muted">
-            Waived by {f.waived.owner}: {f.waived.reason}
-          </p>
-        )}
-        {(f.sourceId || value) && (
-          <small className="v2-muted">
-            {source ? `${source} · ` : ""}
-            {f.anchor}
-          </small>
-        )}
-        {f.evidence && (
-          <details className="v2-history">
-            <summary>Evidence</summary>
-            <p>“{f.evidence}”</p>
-          </details>
-        )}
-      </div>
-      <div className="v2-fact-state">
-        <Tag kind={f.waived ? "gray" : undefined}>{life}</Tag>
-        <Tag>{f.approval}</Tag>
-        {mine.length > 0 && (
-          <small className="v2-muted">
-            Tests {passing}/{mine.length}
-          </small>
-        )}
-      </div>
-      {(canReview || canConfigure || canWaive) && (
-        <div className="v2-actions v2-fact-actions">
-          {canReview && (
-            <button className="v2-button secondary" onClick={onReview}>
-              Mark reviewed
-            </button>
-          )}
-          {canConfigure && (
-            <button className="v2-button secondary" onClick={onConfigure}>
-              Mark configured
-            </button>
-          )}
-          {canWaive && (
-            <>
-              <input
-                aria-label={`Reason to waive ${f.label}`}
-                placeholder="Reason to waive"
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-              />
-              <button
-                className="v2-button secondary"
-                disabled={!reason.trim()}
-                onClick={() => waive(reason)}
-              >
-                Waive with reason
-              </button>
-            </>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-export function Requirements({
-  ctx,
-  focusFact,
-}: {
-  ctx: Ctx;
-  focusFact: string;
-}) {
-  const { state, update } = ctx;
-  const table = routingTable(state);
-  return (
-    <>
-      <div className="v2-page-head">
-        <div>
-          <p className="v2-eyebrow">{state.client?.name}</p>
-          <h1>Requirements</h1>
-          <p className="v2-muted">
-            The single source of truth: twenty required facts. Each links to its
-            source, an owner, an approval, where it lands in the agent, and its
-            tests.
-          </p>
-        </div>
-      </div>
-      <details className="v2-card v2-sources" open>
-        <summary>
-          <strong>Customer team: roles and rules in the system</strong>
-        </summary>
-        <table className="v2-table">
-          <thead>
-            <tr>
-              <th>Scenario</th>
-              <th>Who</th>
-              <th>When</th>
-              <th>Fallback</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {table.map((r) => (
-              <tr key={r.scenario}>
-                <td>
-                  <strong>{r.scenario}</strong>
-                  <small className="v2-muted v2-block">{r.source}</small>
-                </td>
-                <td>{r.who}</td>
-                <td>{r.when}</td>
-                <td>{r.fallback}</td>
-                <td>
-                  <Tag>{r.status}</Tag>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </details>
-      <details className="v2-card v2-sources">
-        <summary>
-          <strong>Sources received ({allSources(state).length})</strong>
-        </summary>
-        {allSources(state).length === 0 && (
-          <p className="v2-muted">
-            No documents yet. Upload them in stage 2 of the journey.
-          </p>
-        )}
-        {allSources(state).map((s) => (
-          <div key={s.id} className="v2-source-row">
-            <strong>{s.title}</strong>
-            <small>
-              {s.type} · {s.received} · from {s.suppliedBy} ·{" "}
-              <Tag kind={s.parse === "Parsed" ? "green" : "amber"}>
-                {s.parse}
-              </Tag>
-            </small>
-            {s.note && <small>{s.note}</small>}
-          </div>
-        ))}
-      </details>
-      {areas.map((area) => (
-        <section key={area} className="v2-area">
-          <h2>
-            {area}{" "}
-            <span className="v2-count">
-              {state.facts.filter((f) => f.area === area).length}
-            </span>
-          </h2>
-          {state.facts
-            .filter((f) => f.area === area)
-            .map((f) => (
-              <FactRow
-                key={f.id}
-                state={state}
-                f={f}
-                focused={focusFact === f.id}
-                onReview={() => update((s) => reviewFact(s, f.id))}
-                onConfigure={() => update((s) => markConfigured(s, f.id))}
-                waive={(reason) => update((s) => waiveFact(s, f.id, reason))}
-              />
-            ))}
-        </section>
-      ))}
-    </>
-  );
-}
-
-/* ------------------------------------------------------------------ process and export */
-export function Process({ ctx }: { ctx: Ctx }) {
+/* ------------------------------------------------------------------ insights */
+export function Insights({ ctx }: { ctx: Ctx }) {
   const { state } = ctx;
   return (
     <>
-      <div className="v2-page-head">
+      <div className="v3-pagehead">
         <div>
-          <p className="v2-eyebrow">{state.client?.name}</p>
-          <h1>Process and export</h1>
-          <p className="v2-muted">
-            You can only automate what you can see. This tracks stage timing and
-            repeated manual work, and exports plain rows.
+          <h1>Insights</h1>
+          <p className="v3-muted">
+            You can only automate what you can see. Stage timing, repeated
+            manual work, and plain-row export.
           </p>
         </div>
       </div>
-      <section className="v2-card">
-        <h3>Time per stage (illustrative)</h3>
-        <ul className="v2-process">
+      <section className="v3-card">
+        <h3>Time per phase (illustrative)</h3>
+        <ul className="v3-process">
           {stageDays.map((s) => (
             <li key={s.name}>
               <span>{s.name}</span>
@@ -849,14 +618,14 @@ export function Process({ ctx }: { ctx: Ctx }) {
           ))}
         </ul>
       </section>
-      <section className="v2-card">
+      <section className="v3-card">
         <h3>Repeated manual work</h3>
-        <p className="v2-muted">
+        <p className="v3-muted">
           Rule: once a step has been done by hand {AUTOMATION_THRESHOLD} times,
           it becomes an automation candidate. Counts are earlier onboardings
           (fictional) plus actions you take in this session.
         </p>
-        <ul className="v2-process">
+        <ul className="v3-process">
           {processCounts(state).map((p) => (
             <li key={p.id}>
               <span>{p.label}</span>
@@ -874,16 +643,17 @@ export function Process({ ctx }: { ctx: Ctx }) {
           ))}
         </ul>
       </section>
-      <section className="v2-card">
+      <section className="v3-card">
         <h3>Export to the team’s tools</h3>
-        <p className="v2-muted">
+        <p className="v3-muted">
           Plain rows (one per required fact) that a table tool such as Coda
           could import, plus a JSON bundle. Nothing is sent anywhere, and this
           is not a Coda integration.
         </p>
-        <div className="v2-actions">
+        <div className="v3-actions">
           <button
-            className="v2-button secondary"
+            className="v3-btn secondary"
+            disabled={!state.client}
             onClick={() =>
               download("onboarding-rows.csv", exportCsv(state), "text/csv")
             }
@@ -891,7 +661,8 @@ export function Process({ ctx }: { ctx: Ctx }) {
             Download rows (CSV)
           </button>
           <button
-            className="v2-button secondary"
+            className="v3-btn secondary"
+            disabled={!state.client}
             onClick={() =>
               download("onboarding.json", exportJson(state), "application/json")
             }
@@ -904,7 +675,7 @@ export function Process({ ctx }: { ctx: Ctx }) {
   );
 }
 
-/* ------------------------------------------------------------------ customer answer form */
+/* ------------------------------------------------------------------ customer portal */
 export function Portal({
   ctx,
   name,
@@ -915,23 +686,23 @@ export function Portal({
   setName: (n: string) => void;
 }) {
   const { state, update, flash, go } = ctx;
+  const client = state.client!;
   const [choice, setChoice] = useState<Record<string, string>>({});
   const [detail, setDetail] = useState<Record<string, string>>({});
   const [review, setReview] = useState(false);
   const [receipt, setReceipt] = useState("");
+  const person =
+    client.contacts.find((c) => c.name === name)?.name ??
+    client.contacts[0].name;
+  const role = contactByName(state, person)?.role ?? "";
   const sentIds = sentQuestionIds(state);
-  const people = [
-    ...new Set(
-      state.questions
-        .filter((q) => sentIds.includes(q.id))
-        .map((q) => q.recipient),
-    ),
-  ];
-  const person = people.includes(name) ? name : (people[0] ?? name);
   const questions = state.questions.filter(
     (q) => q.recipient === person && sentIds.includes(q.id),
   );
-  const steps = onboardingSteps(state);
+  const tasks = planTasks(state).filter(
+    (t) => t.side === "customer" && t.assignee === person,
+  );
+  const phases = phaseProgress(state);
 
   function composed(q: Question) {
     const c = choice[q.id];
@@ -975,192 +746,212 @@ export function Portal({
     });
     setReview(false);
     setReceipt(
-      `${entries.length} answer${entries.length === 1 ? "" : "s"} recorded in this simulated session. Prior versions stay visible below.`,
+      `${entries.length} answer${entries.length === 1 ? "" : "s"} recorded in this simulated session. Earlier versions stay visible below.`,
     );
     setChoice({});
     setDetail({});
   }
 
   return (
-    <div className="v2-portal">
-      <div className="v2-roleswitch" role="status">
-        You are now viewing as the customer: <strong>{person}</strong>
-        {contactByName(state, person)
-          ? `, ${contactByName(state, person)!.role}`
-          : ""}
+    <div className="v3 v3-portal">
+      <div className="v3-roleswitch" role="status">
+        You are viewing the customer portal as <strong>{person}</strong>, {role}
         .
-        <button className="v2-link" onClick={() => go("journey")}>
+        <button className="v3-link" onClick={() => go("client", "plan")}>
           Return to the specialist view
         </button>
       </div>
-      <header className="v2-portal-header">
-        <div className="v2-brandmark">so</div>
-        <span>Fictional customer view · simulated</span>
+      <header className="topbar">
+        <i className="v3-logo-tile">so</i>
+        <strong>{client.name}</strong>
+        <span className="v3-muted">Onboarding portal · fictional</span>
+        <span className="who">
+          {client.contacts.map((c) => (
+            <button
+              key={c.name}
+              className={`v3-chip ${c.name === person ? "on" : ""}`}
+              onClick={() => setName(c.name)}
+            >
+              View as {c.name}
+            </button>
+          ))}
+        </span>
       </header>
-      <main className="v2-portal-main">
-        {sentIds.length === 0 ? (
-          <div className="v2-empty">
-            <h1>No questions have been sent yet.</h1>
-            <p>
-              Approve and send a clarification batch from the onboarding first.
-            </p>
-            <button onClick={() => go("journey")}>Open the onboarding</button>
-          </div>
-        ) : (
-          <>
-            <p className="v2-eyebrow">{state.client?.name} · fictional</p>
-            <h1>Help us get your agent setup details right.</h1>
-            <p className="v2-lede">
-              Avery from the implementation team has a few questions for you.
-              Choose the closest answer or write your own; you can revise while
-              this simulated review is open.
-            </p>
-            {people.length > 1 && (
-              <div className="v2-choices" aria-label="Preview as contact">
-                {people.map((p) => (
-                  <button
-                    key={p}
-                    className={`v2-chip ${person === p ? "selected" : ""}`}
-                    onClick={() => setName(p)}
-                  >
-                    Preview as {p}
-                  </button>
-                ))}
+      <main className="body">
+        <section className="hero">
+          <p className="v3-mono">WELCOME</p>
+          <h1>
+            Hi {person.split(" ")[0]}, here’s where your agent setup stands.
+          </h1>
+          <p>
+            Your implementation specialist is {client.owner}. Target go-live is{" "}
+            {client.goLive}. You only see what needs you.
+          </p>
+        </section>
+        <div className="v3-grid2">
+          <section className="v3-card">
+            <h3>Project plan</h3>
+            {phases.map((p) => (
+              <div className="v3-planrow" key={p.n}>
+                <span>
+                  <strong>{p.name}</strong>
+                  <small className="v3-muted">
+                    {p.status === "Upcoming"
+                      ? "Not started"
+                      : `${p.done} of ${p.total} done`}
+                  </small>
+                </span>
+                <span className="v3-bar thin">
+                  <span
+                    className={`seg ${p.status === "Done" ? "confirmed" : "known"}`}
+                    style={{ flex: p.done }}
+                  />
+                  <span
+                    className="seg rest"
+                    style={{ flex: Math.max(p.total - p.done, 0) }}
+                  />
+                </span>
               </div>
+            ))}
+          </section>
+          <section className="v3-card">
+            <h3>Your tasks</h3>
+            {tasks.length === 0 && (
+              <p className="v3-muted">Nothing is assigned to you yet.</p>
             )}
-            <div className="v2-portal-intro">
-              <span>
-                <strong>{questions.length}</strong> question
-                {questions.length === 1 ? "" : "s"} assigned to {person}
-              </span>
-              <span>Demo link · no email sent</span>
-            </div>
-            <Stepper
-              steps={steps}
-              active={steps.find((s) => s.status === "Current")?.n ?? 5}
-            />
-            {receipt && (
-              <div className="v2-success" role="status">
-                {receipt}
-              </div>
-            )}
-            {review ? (
-              <section className="v2-card">
-                <p className="v2-eyebrow">Review answers</p>
-                <h3>Check before submitting</h3>
-                {questions
-                  .filter((q) => choice[q.id] || detail[q.id]?.trim())
-                  .map((q) => (
-                    <div className="v2-summary-row" key={q.id}>
-                      <strong>{q.title}</strong>
-                      <p>
-                        {choice[q.id] === "unknown"
-                          ? "I don’t know"
-                          : choice[q.id] === "delegate"
-                            ? "Someone else should answer"
-                            : composed(q)}
-                      </p>
-                    </div>
-                  ))}
-                <div className="v2-actions">
-                  <button
-                    className="v2-button secondary"
-                    onClick={() => setReview(false)}
-                  >
-                    Edit answers
-                  </button>
-                  <button className="v2-button" onClick={submit}>
-                    Submit selected answers
-                  </button>
-                </div>
-              </section>
-            ) : (
-              <>
-                {questions.map((q, index) => (
-                  <section className="v2-card v2-portal-card" key={q.id}>
-                    <div className="v2-card-top">
-                      <span>Question {index + 1}</span>
-                      <span>
-                        {q.revisions.length
-                          ? `Previously answered · ${q.revisions.length} revision${q.revisions.length === 1 ? "" : "s"}`
-                          : "Not answered"}
-                      </span>
-                    </div>
-                    <h3>{q.text}</h3>
-                    <p className="v2-context">
-                      Context shared with you: {q.source}. No full source
-                      document is included.
-                    </p>
-                    <div
-                      className="v2-options"
-                      role="radiogroup"
-                      aria-label={q.title}
-                    >
-                      {[
-                        ...q.options.map((o, i) => [`opt:${i}`, o] as const),
-                        ["unknown", "I don’t know"] as const,
-                        ["delegate", "Someone else should answer"] as const,
-                      ].map(([value, label]) => (
-                        <label key={value}>
-                          <input
-                            type="radio"
-                            name={`choice-${q.id}`}
-                            checked={choice[q.id] === value}
-                            onChange={() =>
-                              setChoice({ ...choice, [q.id]: value })
-                            }
-                          />{" "}
-                          {label}
-                        </label>
-                      ))}
-                    </div>
-                    <label className="v2-field">
-                      Add detail (optional)
-                      <textarea
-                        value={detail[q.id] || ""}
-                        onChange={(e) =>
-                          setDetail({ ...detail, [q.id]: e.target.value })
-                        }
-                        placeholder="Write the policy or next step in your own words"
-                      />
-                    </label>
-                    {q.revisions.length > 0 && (
-                      <details className="v2-history">
-                        <summary>View submitted answer history</summary>
-                        {q.revisions.map((r, i) => (
-                          <div key={i}>
-                            <strong>{r.at}</strong>
-                            <p>
-                              {r.kind === "answer"
-                                ? r.value
-                                : r.kind === "unknown"
-                                  ? "I don’t know"
-                                  : "Someone else should answer"}
-                            </p>
-                          </div>
-                        ))}
-                      </details>
-                    )}
-                  </section>
-                ))}
-                <div className="v2-portal-footer">
-                  <p>
-                    Your name and role are self-declared in a real workflow. A
-                    review link does not verify identity or provide legal
-                    authorization.
-                  </p>
-                  <div className="v2-actions">
+            {tasks.map((t) => (
+              <div className="v3-task compact" key={t.id}>
+                <StatusDot status={t.status} />
+                <span className="title">{t.title}</span>
+                <span className="due">{t.due}</span>
+                {t.id.startsWith("p2-") &&
+                  t.status !== "Done" &&
+                  t.status !== "Blocked" && (
                     <button
-                      className="v2-button"
-                      onClick={() => setReview(true)}
+                      className="v3-btn secondary"
+                      onClick={() =>
+                        update((s) => uploadSource(s, t.id.slice(3)))
+                      }
                     >
-                      Review answers →
+                      Upload
                     </button>
-                  </div>
+                  )}
+              </div>
+            ))}
+          </section>
+        </div>
+        {receipt && (
+          <div className="v3-banner success" role="status">
+            {receipt}
+          </div>
+        )}
+        {questions.length === 0 && (
+          <p className="v3-muted">No questions are waiting for you.</p>
+        )}
+        {questions.length > 0 && !review && (
+          <>
+            <h2 className="v3-sectiontitle">Questions for you</h2>
+            {questions.map((q, index) => (
+              <section className="v3-card" key={q.id}>
+                <div className="v3-cardhead">
+                  <span className="v3-mono">QUESTION {index + 1}</span>
+                  <Tag>
+                    {q.revisions.length
+                      ? `Answered ${q.revisions.length}×`
+                      : "Not answered"}
+                  </Tag>
                 </div>
-              </>
-            )}
+                <h3 className="q">{q.text}</h3>
+                <p className="v3-muted">
+                  Context shared with you: {q.source}. No full source document
+                  is included.
+                </p>
+                <div
+                  className="v3-options"
+                  role="radiogroup"
+                  aria-label={q.title}
+                >
+                  {[
+                    ...q.options.map((o, i) => [`opt:${i}`, o] as const),
+                    ["unknown", "I don’t know"] as const,
+                    ["delegate", "Someone else should answer"] as const,
+                  ].map(([value, label]) => (
+                    <label key={value}>
+                      <input
+                        type="radio"
+                        name={`choice-${q.id}`}
+                        checked={choice[q.id] === value}
+                        onChange={() => setChoice({ ...choice, [q.id]: value })}
+                      />{" "}
+                      {label}
+                    </label>
+                  ))}
+                </div>
+                <label className="v3-field">
+                  Add detail (optional)
+                  <textarea
+                    value={detail[q.id] || ""}
+                    onChange={(e) =>
+                      setDetail({ ...detail, [q.id]: e.target.value })
+                    }
+                    placeholder="Write the policy or next step in your own words"
+                  />
+                </label>
+                {q.revisions.length > 0 && (
+                  <details className="v3-evidence">
+                    <summary>Your earlier answers</summary>
+                    {q.revisions.map((r, i) => (
+                      <p key={i}>
+                        <strong>{r.at}:</strong>{" "}
+                        {r.kind === "answer"
+                          ? r.value
+                          : r.kind === "unknown"
+                            ? "I don’t know"
+                            : "Someone else should answer"}
+                      </p>
+                    ))}
+                  </details>
+                )}
+              </section>
+            ))}
+            <div className="v3-actions">
+              <button className="v3-btn" onClick={() => setReview(true)}>
+                Review answers →
+              </button>
+            </div>
+            <p className="v3-muted">
+              Your name and role are self-declared in a real workflow. A review
+              link does not verify identity or provide legal authorization.
+            </p>
           </>
+        )}
+        {review && (
+          <section className="v3-card">
+            <h3>Check before submitting</h3>
+            {questions
+              .filter((q) => choice[q.id] || detail[q.id]?.trim())
+              .map((q) => (
+                <p key={q.id}>
+                  <strong>{q.title}:</strong>{" "}
+                  {choice[q.id] === "unknown"
+                    ? "I don’t know"
+                    : choice[q.id] === "delegate"
+                      ? "Someone else should answer"
+                      : composed(q)}
+                </p>
+              ))}
+            <div className="v3-actions">
+              <button
+                className="v3-btn secondary"
+                onClick={() => setReview(false)}
+              >
+                Edit answers
+              </button>
+              <button className="v3-btn" onClick={submit}>
+                Submit selected answers
+              </button>
+            </div>
+          </section>
         )}
       </main>
     </div>
