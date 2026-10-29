@@ -635,7 +635,12 @@ export default function Prototype() {
               </details>
               {areas.map((area) => (
                 <section key={area} className="v2-area">
-                  <h2>{area}</h2>
+                  <h2>
+                    {area}{" "}
+                    <span className="v2-count">
+                      {state.facts.filter((f) => f.area === area).length}
+                    </span>
+                  </h2>
                   {state.facts
                     .filter((f) => f.area === area)
                     .map((f) => (
@@ -1015,23 +1020,7 @@ export default function Prototype() {
                             <p>
                               <strong>Expected:</strong> {t.expected}
                             </p>
-                            <label className="v2-field">
-                              Note
-                              <input
-                                value={
-                                  testNotes[t.id] ??
-                                  state.tests[t.id]?.note ??
-                                  ""
-                                }
-                                onChange={(e) =>
-                                  setTestNotes({
-                                    ...testNotes,
-                                    [t.id]: e.target.value,
-                                  })
-                                }
-                              />
-                            </label>
-                            <div className="v2-actions">
+                            <div className="v2-actions v2-test-actions">
                               <button
                                 className="v2-button secondary"
                                 onClick={() =>
@@ -1062,6 +1051,21 @@ export default function Prototype() {
                               >
                                 Record fail
                               </button>
+                              <input
+                                aria-label={`Note for ${t.id}`}
+                                placeholder="Note (optional)"
+                                value={
+                                  testNotes[t.id] ??
+                                  state.tests[t.id]?.note ??
+                                  ""
+                                }
+                                onChange={(e) =>
+                                  setTestNotes({
+                                    ...testNotes,
+                                    [t.id]: e.target.value,
+                                  })
+                                }
+                              />
                             </div>
                           </div>
                         );
@@ -1287,44 +1291,49 @@ function FactCard({
       id={`fact-${f.id}`}
       className={`v2-fact ${coverageOf(f) === "empty" ? "gap" : ""} ${focused ? "focused" : ""}`}
     >
-      <div className="v2-fact-head">
+      <div className="v2-fact-label">
         <strong>
           <span className="v2-fact-id">{f.id}</span> {f.label}
-          {f.critical && <span className="v2-critical"> critical</span>}
         </strong>
-        <span className="v2-badges">
-          <span className={`v2-status ${f.waived ? "gray" : tone(life)}`}>
-            {life}
-          </span>
-          <span className={`v2-status ${tone(f.approval)}`}>{f.approval}</span>
-        </span>
+        {f.critical && <span className="v2-critical">Critical</span>}
+        <small>{f.owner}</small>
       </div>
-      {value ? (
-        <p className="v2-fact-value">{value}</p>
-      ) : (
-        <p className="v2-fact-value gap">Not received yet.</p>
-      )}
-      {f.customerAnswer && f.customerAnswer.value !== f.value && (
-        <p className="v2-muted">Customer answer: {f.customerAnswer.value}</p>
-      )}
-      {f.note && <p className="v2-muted">{f.note}</p>}
-      {f.waived && (
-        <p className="v2-muted">
-          Waived by {f.waived.owner}: {f.waived.reason}
-        </p>
-      )}
-      <small className="v2-muted">
-        Owner {f.owner} · {source ? `${source} · ` : ""}
-        {f.anchor}
-      </small>
-      {f.evidence && (
-        <details className="v2-history">
-          <summary>Evidence</summary>
-          <p>“{f.evidence}”</p>
-        </details>
-      )}
+      <div className="v2-fact-body">
+        {value ? (
+          <p className="v2-fact-value">{value}</p>
+        ) : (
+          <p className="v2-fact-value gap">Not received yet.</p>
+        )}
+        {f.customerAnswer && f.customerAnswer.value !== f.value && (
+          <p className="v2-muted">Customer answer: {f.customerAnswer.value}</p>
+        )}
+        {f.note && <p className="v2-muted">{f.note}</p>}
+        {f.waived && (
+          <p className="v2-muted">
+            Waived by {f.waived.owner}: {f.waived.reason}
+          </p>
+        )}
+        {(f.sourceId || value) && (
+          <small className="v2-muted">
+            {source ? `${source} · ` : ""}
+            {f.anchor}
+          </small>
+        )}
+        {f.evidence && (
+          <details className="v2-history">
+            <summary>Evidence</summary>
+            <p>“{f.evidence}”</p>
+          </details>
+        )}
+      </div>
+      <div className="v2-fact-state">
+        <span className={`v2-status ${f.waived ? "gray" : tone(life)}`}>
+          {life}
+        </span>
+        <span className={`v2-status ${tone(f.approval)}`}>{f.approval}</span>
+      </div>
       {(canReview || canConfigure || canWaive) && (
-        <div className="v2-actions">
+        <div className="v2-actions v2-fact-actions">
           {canReview && (
             <button className="v2-button secondary" onClick={onReview}>
               Mark reviewed
