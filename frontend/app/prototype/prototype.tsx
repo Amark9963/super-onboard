@@ -2,9 +2,6 @@
 
 import { useEffect, useState } from "react";
 import {
-  LATE_ID,
-  addSource,
-  applyDefault,
   assignments,
   createClient,
   initialState,
@@ -110,9 +107,6 @@ export default function Prototype() {
       />
     );
 
-  const lateAdded = state.addedSources.includes(LATE_ID);
-  const petsSent =
-    state.questions.find((q) => q.id === "q-pets")?.status === "Sent";
   const guideSteps = tryItSteps(state).filter((x) => !x.optional);
   const guideDone = guideSteps.filter((x) => x.done).length;
   const guideTotal = guideSteps.length;
@@ -291,30 +285,6 @@ export default function Prototype() {
           <div className="panel" role="region" aria-label="Demo controls">
             <strong>Demo controls</strong>
             <p>These simulate things that happen outside the app.</p>
-            <button
-              className="v3-btn secondary"
-              disabled={lateAdded || !client}
-              onClick={() => {
-                update(addSource);
-                setToast(
-                  "A late email arrived from the customer. It was read into the spec and the earlier contradiction check is now out of date.",
-                );
-              }}
-            >
-              {lateAdded ? "Late email received" : "A late email arrives"}
-            </button>
-            <button
-              className="v3-btn secondary"
-              disabled={!petsSent}
-              onClick={() => {
-                update((s) => applyDefault(s, "q-pets"));
-                setToast(
-                  "Deadline passed with no reply: proceeding on the default and flagging it as unconfirmed.",
-                );
-              }}
-            >
-              Deadline passes with no reply
-            </button>
             <button
               className="v3-btn secondary"
               onClick={() => {

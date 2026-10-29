@@ -51,9 +51,7 @@ that ticks off by itself. The same path:
    who decides routing and integrations.
 7. **Preview as customer** (or the guide's “Answer as the customer”): answer as Maya Chen.
 8. **Approve the replies** and close the open gaps (waive them with a reason).
-9. **Demo controls → “A late email arrives.”** The earlier check goes stale, a new conflict
-   appears, and a new question is assigned to a different contact.
-10. **Plan:** setup and go-live tasks unlock once clarification is done. Tick them off.
+9. **Plan:** setup and go-live tasks unlock once clarification is done. Tick them off.
 
 ## What is simulated
 

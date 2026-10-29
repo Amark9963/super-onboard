@@ -2,7 +2,6 @@
 // never disagree with what the viewer actually did.
 
 import {
-  LATE_ID,
   consistencyReport,
   documentRequests,
   onboardingSteps,
@@ -29,7 +28,6 @@ export type TryStep = {
 export function tryItSteps(state: PrototypeState): TryStep[] {
   const report = consistencyReport(state);
   const steps = state.client ? onboardingSteps(state) : null;
-  const lateIn = state.addedSources.includes(LATE_ID);
   return [
     {
       id: "create",
@@ -92,14 +90,6 @@ export function tryItSteps(state: PrototypeState): TryStep[] {
       done: Boolean(steps && steps[2].status === "Done"),
       needsClient: true,
       target: { kind: "client", tab: "clarifications" },
-    },
-    {
-      id: "late",
-      title: "See what a late email does",
-      hint: "Demo controls → “A late email arrives”. The earlier check goes stale, a new conflict appears, and a new question is assigned to a different contact.",
-      done: lateIn && !report.stale && state.reviewedSources.includes(LATE_ID),
-      needsClient: true,
-      target: { kind: "tray" },
     },
     {
       id: "finish",
