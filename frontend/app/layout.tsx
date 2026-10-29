@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
 import "./styles.css";
+import "./prototype/prototype.css";
 export const metadata: Metadata = {
-  title: "Super Onboard | Workspace",
-  description: "Independent implementation requirements workspace",
+  title: "Super Onboard | Preparation Prototype",
+  description: "Fictional, interactive agent onboarding preparation prototype",
 };
 export default function Layout({ children }: { children: React.ReactNode }) {
   return (

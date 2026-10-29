@@ -1,5 +1,5 @@
-import Workspace from "./workspace";
+import Prototype from "./prototype/prototype";
 
 export default function Home() {
-  return <Workspace />;
+  return <Prototype />;
 }
