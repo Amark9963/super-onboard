@@ -1,44 +1,16 @@
-// Fictional client profile and the kickoff plan derived from the intake spec.
-// Everything here is simulated, fictional data. No real company, person or address.
+// Derived views of the client onboarding: the kickoff agenda and the document request rows.
+// Everything here is simulated, fictional data.
 
-import { areas, coverageOf, type Area, type PrototypeState } from "./state.ts";
-
-export const client = {
-  name: "Oakwood Property Group",
-  vertical: "Residential property management",
-  scope: "2 properties · 310 units",
-  plan: "Inbound resident assistant (voice)",
-  owner: "Avery Morgan",
-  kickoff: "Oct 22, 2026",
-  goLive: "Nov 20, 2026",
-  hours: "Leasing desk Mon–Fri, 9 a.m.–5 p.m.",
-  channels: ["Inbound voice"],
-  systems: ["Property management system (PMS)", "External scheduling system"],
-  properties: [
-    { name: "Maple Grove", units: 180 },
-    { name: "Willow Court", units: 130 },
-  ],
-  contacts: [
-    {
-      name: "Maya Chen",
-      role: "Operations lead",
-      decides: "Routing, escalation, integrations",
-      email: "maya.chen@oakwood.example",
-    },
-    {
-      name: "Priya Shah",
-      role: "Property manager",
-      decides: "Property policies and exceptions",
-      email: "priya.shah@oakwood.example",
-    },
-    {
-      name: "Jordan Lee",
-      role: "Leasing coordinator",
-      decides: "Documents and rosters",
-      email: "jordan.lee@oakwood.example",
-    },
-  ],
-};
+import {
+  areas,
+  contactFor,
+  coverageOf,
+  documentRequests,
+  sourceCatalog,
+  type Area,
+  type PrototypeState,
+  type Source,
+} from "./state.ts";
 
 /** The kickoff call agenda: every required fact becomes a question, marked when already answered. */
 export function kickoffAgenda(state: PrototypeState) {
@@ -54,40 +26,37 @@ export function kickoffAgenda(state: PrototypeState) {
   }));
 }
 
-export type DocumentStatus = "Received" | "Needs a readable copy" | "Missing";
-export const documentRequests: {
-  area: Area;
+export type DocStatus = "Not received" | "Received" | "Needs a readable copy";
+export type DocRow = {
+  sourceId: string;
   label: string;
-  sourceId: string | null;
-}[] = [
-  { area: "Goals", label: "Kickoff call recording", sourceId: "transcript" },
-  {
-    area: "Team & rules",
-    label: "Escalation contacts spreadsheet",
-    sourceId: "roster",
-  },
-  { area: "Team & rules", label: "Operations handbook", sourceId: "sop" },
-  { area: "FAQs", label: "Resident FAQ or website link", sourceId: "faq" },
-  { area: "FAQs", label: "Move-in checklist", sourceId: "scan" },
-  {
-    area: "Scenarios",
-    label: "Call-handling examples or SOPs",
-    sourceId: "sop",
-  },
-  {
-    area: "Integrations",
-    label: "Property-system owner and access contact",
-    sourceId: null,
-  },
-];
+  area: Area;
+  source: Source;
+  status: DocStatus;
+  /** Who owns getting this document to us. Team-owned documents belong to our own team. */
+  assignee: string;
+  role: string;
+  side: "customer" | "team";
+};
 
-export function documentStatus(
-  state: PrototypeState,
-  sourceId: string | null,
-  sources: { id: string; parse: string }[],
-): DocumentStatus {
-  if (!sourceId) return "Missing";
-  const s = sources.find((x) => x.id === sourceId);
-  if (!s) return "Missing";
-  return s.parse === "Parsed" ? "Received" : "Needs a readable copy";
+export function documentRows(state: PrototypeState): DocRow[] {
+  return documentRequests.map((d) => {
+    const source = sourceCatalog.find((s) => s.id === d.sourceId)!;
+    const got = state.addedSources.includes(d.sourceId);
+    const status: DocStatus = !got
+      ? "Not received"
+      : source.parse === "Parsed"
+        ? "Received"
+        : "Needs a readable copy";
+    const person =
+      source.origin === "team" ? undefined : contactFor(state, source.topic);
+    return {
+      ...d,
+      source,
+      status,
+      assignee: person?.name ?? state.client?.owner ?? "",
+      role: person?.role ?? "Onboarding specialist",
+      side: source.origin === "team" ? "team" : "customer",
+    };
+  });
 }

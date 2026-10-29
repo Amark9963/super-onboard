@@ -2,44 +2,52 @@
 
 import { useEffect, useState } from "react";
 import {
+  LATE_ID,
   addSource,
   applyDefault,
+  assignments,
+  createClient,
   initialState,
-  lateSource,
-  nextActions,
+  type Client,
   type PrototypeState,
 } from "./state";
-import { client } from "./client";
 import Journey from "./journey";
-import { Clients, NewOnboarding, Portal, Process, Requirements } from "./pages";
+import {
+  Assignments,
+  Dashboard,
+  Login,
+  NewOnboarding,
+  Portal,
+  Process,
+  Requirements,
+} from "./pages";
 import type { Ctx, View } from "./ui";
 
 const views: View[] = [
-  "clients",
+  "login",
+  "dashboard",
   "new",
   "journey",
   "spec",
+  "assignments",
   "process",
   "portal",
 ];
-const clientNav: { view: View; label: string; icon: string }[] = [
-  { view: "journey", label: "Journey", icon: "→" },
-  { view: "spec", label: "Requirements", icon: "◇" },
-  { view: "process", label: "Process and export", icon: "↻" },
-];
 const crumb: Record<string, string> = {
-  clients: "Clients",
+  dashboard: "Dashboard",
   new: "New onboarding",
   journey: "Journey",
   spec: "Requirements",
+  assignments: "Assignments",
   process: "Process and export",
 };
 
 export default function Prototype() {
-  const [view, setView] = useState<View>("clients");
+  const [signedIn, setSignedIn] = useState(false);
+  const [view, setView] = useState<View>("login");
   const [state, setState] = useState<PrototypeState>(initialState);
   const [focusFact, setFocusFact] = useState("");
-  const [portalRole, setPortalRole] = useState("Operations lead");
+  const [portalName, setPortalName] = useState("");
   const [welcome, setWelcome] = useState(false);
   const [toast, setToast] = useState("");
   const [menu, setMenu] = useState(false);
@@ -77,24 +85,67 @@ export default function Prototype() {
     update: setState,
     flash: setToast,
     go,
-    setPortalRole,
+    setPortalRole: setPortalName,
     setFocusFact,
   };
+
+  if (!signedIn || view === "login")
+    return (
+      <Login
+        onSignIn={() => {
+          setSignedIn(true);
+          go("dashboard");
+        }}
+      />
+    );
+
+  // Customer-side pages need a client; send everyone else back to the dashboard.
+  const needsClient = [
+    "journey",
+    "spec",
+    "assignments",
+    "process",
+    "portal",
+  ].includes(view);
+  if (needsClient && !state.client)
+    return (
+      <Shell>
+        <div className="v2-empty">
+          <h1>Start an onboarding first.</h1>
+          <p>This page appears after you create a client.</p>
+          <button onClick={() => go("new")}>New onboarding</button>
+        </div>
+      </Shell>
+    );
 
   if (view === "portal")
     return (
       <Portal
         key={resets}
         ctx={ctx}
-        role={portalRole}
-        setRole={setPortalRole}
+        name={portalName}
+        setName={setPortalName}
       />
     );
 
-  const lateAdded = state.addedSources.includes(lateSource.id);
+  const lateAdded = state.addedSources.includes(LATE_ID);
   const petsSent =
     state.questions.find((q) => q.id === "q-pets")?.status === "Sent";
-  const waiting = nextActions(state).length;
+  const waiting = assignments(state).filter((a) => a.side === "team").length;
+
+  function Shell({ children }: { children: React.ReactNode }) {
+    return (
+      <div className="v2-app">
+        <main className="v2-content">{children}</main>
+      </div>
+    );
+  }
+
+  function create(client: Client) {
+    setState((s) => createClient(s, client));
+    setWelcome(true);
+    go("journey");
+  }
 
   return (
     <div className="v2-app">
@@ -107,31 +158,53 @@ export default function Prototype() {
           </div>
         </div>
         <button
-          className={`v2-side-link ${view === "clients" || view === "new" ? "active" : ""}`}
-          onClick={() => go("clients")}
+          className={`v2-side-link ${view === "dashboard" || view === "new" ? "active" : ""}`}
+          onClick={() => go("dashboard")}
         >
-          <span>▦</span> Clients
+          <span>▦</span> Dashboard
         </button>
-        {view !== "new" && (
+        {state.client && view !== "new" && (
           <>
-            <div className="v2-side-section">{client.name}</div>
-            {clientNav.map((item) => (
-              <button
-                key={item.view}
-                className={`v2-side-link ${view === item.view ? "active" : ""}`}
-                onClick={() => go(item.view)}
-              >
-                <span>{item.icon}</span> {item.label}
-                {item.view === "journey" && waiting > 0 && <b>{waiting}</b>}
-              </button>
-            ))}
+            <div className="v2-side-section">{state.client.name}</div>
+            <button
+              className={`v2-side-link ${view === "journey" ? "active" : ""}`}
+              onClick={() => go("journey")}
+            >
+              <span>→</span> Journey {waiting > 0 && <b>{waiting}</b>}
+            </button>
+            <button
+              className={`v2-side-link ${view === "assignments" ? "active" : ""}`}
+              onClick={() => go("assignments")}
+            >
+              <span>☷</span> Assignments
+            </button>
+            <button
+              className={`v2-side-link ${view === "spec" ? "active" : ""}`}
+              onClick={() => go("spec")}
+            >
+              <span>◇</span> Requirements
+            </button>
+            <button
+              className={`v2-side-link ${view === "process" ? "active" : ""}`}
+              onClick={() => go("process")}
+            >
+              <span>↻</span> Process and export
+            </button>
           </>
         )}
         <div className="v2-sidebar-bottom">
           <span className="v2-avatar">AM</span>
           <div>
-            <strong>{client.owner}</strong>
-            <small>Implementation specialist</small>
+            <strong>Avery Morgan</strong>
+            <button
+              className="v2-link"
+              onClick={() => {
+                setSignedIn(false);
+                go("login");
+              }}
+            >
+              Sign out
+            </button>
           </div>
         </div>
       </aside>
@@ -145,14 +218,14 @@ export default function Prototype() {
             ☰
           </button>
           <div className="v2-breadcrumb">
-            <button onClick={() => go("clients")}>Clients</button>
-            {view !== "clients" && view !== "new" && (
+            <button onClick={() => go("dashboard")}>Dashboard</button>
+            {view !== "dashboard" && view !== "new" && state.client && (
               <>
                 <span>/</span>
-                <span>{client.name}</span>
+                <span>{state.client.name}</span>
               </>
             )}
-            {view !== "clients" && (
+            {view !== "dashboard" && (
               <>
                 <span>/</span>
                 <strong>{crumb[view]}</strong>
@@ -173,16 +246,8 @@ export default function Prototype() {
               </button>
             </div>
           )}
-          {view === "clients" && <Clients ctx={ctx} />}
-          {view === "new" && (
-            <NewOnboarding
-              ctx={ctx}
-              onCreate={() => {
-                setWelcome(true);
-                go("journey");
-              }}
-            />
-          )}
+          {view === "dashboard" && <Dashboard ctx={ctx} />}
+          {view === "new" && <NewOnboarding ctx={ctx} onCreate={create} />}
           {view === "journey" && (
             <Journey
               ctx={ctx}
@@ -190,6 +255,7 @@ export default function Prototype() {
               dismissWelcome={() => setWelcome(false)}
             />
           )}
+          {view === "assignments" && <Assignments ctx={ctx} />}
           {view === "spec" && <Requirements ctx={ctx} focusFact={focusFact} />}
           {view === "process" && <Process ctx={ctx} />}
         </main>
@@ -206,11 +272,11 @@ export default function Prototype() {
             <p>These simulate things that happen outside the app.</p>
             <button
               className="v2-button secondary"
-              disabled={lateAdded}
+              disabled={lateAdded || !state.client}
               onClick={() => {
                 setState(addSource);
                 setToast(
-                  "A late email arrived. Two gaps were filled and the earlier consistency check is now out of date.",
+                  "A late email arrived from the customer. It was read into the spec and the earlier contradiction check is now out of date.",
                 );
               }}
             >
@@ -234,6 +300,7 @@ export default function Prototype() {
                 setState(initialState);
                 setResets((r) => r + 1);
                 setWelcome(false);
+                go("dashboard");
                 setToast("Demo reset to the starting state.");
               }}
             >

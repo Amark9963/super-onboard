@@ -3,249 +3,352 @@ import assert from "node:assert/strict";
 import {
   addSource,
   applyDefault,
+  assignments,
   consistencyReport,
+  contactFor,
   coverage,
+  createClient,
   currentStep,
+  demoClient,
+  documentRequests,
   exportCsv,
   initialState,
   launchChecklist,
   markConfigured,
   nextActions,
   onboardingSteps,
+  prereqItems,
   processCounts,
   readiness,
+  recipientsInUse,
   recordTest,
   reopenQuestion,
+  requestReadableCopy,
   resolveInternally,
   reviewAnswer,
-  reviewFact,
+  reviewSource,
+  routingTable,
   runConsistencyCheck,
+  sendDocumentRequest,
   sendRequest,
   submitAnswer,
   testCases,
   testStatus,
+  togglePrereq,
   updateQuestion,
+  uploadSource,
   waiveFact,
   weeklyCheckIn,
   convertIssue,
 } from "../app/prototype/state.ts";
-import {
-  documentRequests,
-  documentStatus,
-  kickoffAgenda,
-} from "../app/prototype/client.ts";
-import { allSources } from "../app/prototype/state.ts";
 
-const approveAll = (s) => {
+const started = () => createClient(initialState, demoClient);
+const upload = (s, ...ids) => ids.reduce(uploadSource, s);
+const approveAndSend = (s) => {
   for (const q of s.questions)
-    s = updateQuestion(s, q.id, { status: "Ready to send" });
+    if (q.status === "AI draft")
+      s = updateQuestion(s, q.id, { status: "Ready to send" });
+  for (const name of recipientsInUse(s))
+    s = sendRequest(
+      s,
+      name,
+      s.questions.filter((q) => q.recipient === name).map((q) => q.id),
+    );
   return s;
-};
-const sendAll = (s) => {
-  s = approveAll(s);
-  s = sendRequest(s, "Operations lead", ["q-emergency", "q-integration"]);
-  return sendRequest(s, "Property manager", ["q-pets"]);
 };
 const answer = (s, id, text) =>
   reviewAnswer(submitAnswer(s, id, text, "answer"), id);
 
-/** Everything resolved except testing. */
+/** An onboarding with every documented step done except configuration and tests. */
 function prepared() {
-  let s = runConsistencyCheck(sendAll(initialState));
+  let s = sendDocumentRequest(started());
+  s = upload(s, "transcript", "sop", "roster", "faq", "scan", "prompt-draft");
+  for (const id of ["transcript", "sop", "roster", "faq"])
+    s = reviewSource(s, id);
+  s = runConsistencyCheck(s);
   s = resolveInternally(
     s,
     "emergency-transfer",
     "c-draft-transfer",
     "Customer wants a transfer when possible",
   );
+  s = approveAndSend(s);
   s = answer(s, "q-emergency", "On-call supervisor first");
   s = answer(s, "q-integration", "Maya authorizes read-only lookups");
-  s = answer(
-    s,
-    "q-pets",
-    "Per property: two cats at Maple Grove, one cat at Willow Court",
-  );
-  s = waiveFact(s, "G2", "x"); // G2 is not critical
-  s = waiveFact(s, "F4", "Customer will supply a text copy later");
-  s = waiveFact(s, "S3", "Not in scope for launch");
-  for (const f of s.facts) s = reviewFact(s, f.id);
+  for (const id of ["G2", "S3", "F4"])
+    s = waiveFact(s, id, "Not needed for launch");
+  for (const p of prereqItems) s = togglePrereq(s, p.id);
   return s;
 }
 
-test("the spec starts at 13 known, 3 awaiting clarification, 4 empty, 3 confirmed", () => {
+test("the app starts with no client and an empty spec of 20 required facts", () => {
+  assert.equal(initialState.client, null);
   const c = coverage(initialState);
   assert.deepEqual(
     [c.total, c.known, c.clarifying, c.empty, c.confirmed],
-    [20, 13, 3, 4, 3],
+    [20, 2, 1, 17, 0],
   );
-});
-
-test("steps are derived: step 3 is current and has real checklist pieces", () => {
-  const steps = onboardingSteps(initialState);
-  assert.equal(currentStep(initialState).n, 3);
-  assert.deepEqual(
-    steps.map((x) => x.status),
-    ["Done", "Done", "Current", "Upcoming", "Upcoming"],
-  );
-  assert.equal(steps[2].pieces.length, 4);
-  assert.equal(steps[2].pieces.filter((p) => p.done).length, 0);
-  assert.equal(nextActions(initialState)[0].id, "run-check");
-});
-
-test("consistency check finds source and draft conflicts, not scope variations", () => {
-  const r = consistencyReport(runConsistencyCheck(initialState));
-  assert.deepEqual(r.conflicts.map((c) => c.id).sort(), [
-    "emergency-transfer",
-    "weekend-flood-route",
-  ]);
   assert.equal(
-    r.conflicts.find((c) => c.id === "emergency-transfer").needs,
-    "internal",
+    nextActions(initialState).length,
+    0,
+    "no onboarding, no actions",
+  );
+});
+
+test("creating a client resets the onboarding and keeps the entered details", () => {
+  const s = uploadSource(started(), "faq");
+  assert.equal(s.addedSources.length, 1);
+  const again = createClient(s, { ...demoClient, name: "Birch & Co" });
+  assert.equal(again.client.name, "Birch & Co");
+  assert.equal(again.addedSources.length, 0);
+  assert.equal(coverage(again).empty, 17);
+});
+
+test("uploading a document fills empty facts with citations and never overwrites", () => {
+  const s = uploadSource(started(), "sop");
+  const t3 = s.facts.find((f) => f.id === "T3");
+  assert.match(t3.value, /On-call maintenance supervisor/);
+  assert.equal(t3.sourceId, "sop");
+  assert.equal(t3.lifecycle, "Extracted");
+  assert.equal(uploadSource(s, "sop"), s, "uploading twice is a no-op");
+  assert.equal(s.sourceRevision, 2);
+  const scan = uploadSource(s, "scan");
+  assert.equal(
+    scan.facts.find((f) => f.id === "F4").value,
+    null,
+    "an unreadable scan fills nothing",
+  );
+  assert.equal(
+    coverage(upload(started(), "transcript", "sop", "roster", "faq")).empty,
+    17 - 13,
+  );
+});
+
+test("reviewing a document marks only the facts it filled", () => {
+  let s = upload(started(), "roster", "faq");
+  s = reviewSource(s, "roster");
+  assert.equal(
+    s.facts.find((f) => f.id === "T1").approval,
+    "Specialist reviewed",
+  );
+  assert.equal(s.facts.find((f) => f.id === "F1").approval, "Not reviewed");
+  assert.equal(reviewSource(s, "roster"), s);
+});
+
+test("the contradiction check flags the facts, drafts questions and assigns them by topic", () => {
+  let s = upload(started(), "transcript", "sop");
+  assert.equal(
+    s.facts.find((f) => f.id === "T2").lifecycle,
+    "Extracted",
+    "looks fine until checked",
+  );
+  s = runConsistencyCheck(s);
+  const r = consistencyReport(s);
+  assert.deepEqual(
+    r.conflicts.map((c) => c.id),
+    ["weekend-flood-route"],
   );
   assert.deepEqual(
     r.variations.map((v) => v.id),
     ["pet-limit"],
   );
-  assert.ok(readiness(initialState).blockers[0].includes("consistency check"));
+  assert.equal(
+    s.facts.find((f) => f.id === "T2").lifecycle,
+    "Needs clarification",
+  );
+  assert.match(s.facts.find((f) => f.id === "S1").note, /Sources disagree/);
+  assert.deepEqual(s.questions.map((q) => q.id).sort(), [
+    "q-emergency",
+    "q-integration",
+  ]);
+  assert.equal(
+    s.questions.find((q) => q.id === "q-emergency").recipient,
+    "Maya Chen",
+  );
+  assert.equal(
+    s.questions.find((q) => q.id === "q-integration").recipient,
+    "Maya Chen",
+  );
 });
 
-test("a late source fills gaps, makes the check stale and turns pets into a real conflict", () => {
-  const checked = runConsistencyCheck(initialState);
-  assert.equal(consistencyReport(checked).stale, false);
-  const late = addSource(checked);
-  assert.equal(addSource(late), late, "adding twice is a no-op");
-  const g2 = late.facts.find((f) => f.id === "G2");
-  assert.match(g2.value, /90%/);
-  assert.equal(g2.lifecycle, "Extracted");
-  assert.equal(coverage(late).empty, 2);
-  assert.equal(consistencyReport(late).stale, true);
-  assert.ok(readiness(late).blockers.some((b) => b.includes("run it again")));
-  const rerun = consistencyReport(runConsistencyCheck(late));
-  assert.equal(rerun.stale, false);
-  assert.deepEqual(rerun.conflicts.map((c) => c.id).sort(), [
-    "emergency-transfer",
-    "pet-limit",
-    "weekend-flood-route",
-  ]);
-  assert.equal(rerun.variations.length, 0);
+test("a late email makes the check stale, fills gaps and creates a pet-policy question for another contact", () => {
+  let s = runConsistencyCheck(upload(started(), "transcript", "sop"));
+  s = addSource(s);
+  assert.equal(consistencyReport(s).stale, true);
+  assert.match(s.facts.find((f) => f.id === "G2").value, /90%/);
+  assert.ok(readiness(s).blockers.some((b) => b.includes("run it again")));
+  s = runConsistencyCheck(s);
+  assert.deepEqual(
+    consistencyReport(s)
+      .conflicts.map((c) => c.id)
+      .sort(),
+    ["pet-limit", "weekend-flood-route"],
+  );
+  assert.equal(
+    s.questions.find((q) => q.id === "q-pets").recipient,
+    "Priya Shah",
+  );
+  assert.equal(
+    s.facts.find((f) => f.id === "F3").lifecycle,
+    "Needs clarification",
+  );
+});
+
+test("questions go to whoever decides the topic, with a fallback to the first contact", () => {
+  assert.equal(contactFor(started(), "policies").name, "Priya Shah");
+  const noPolicies = createClient(initialState, {
+    ...demoClient,
+    contacts: demoClient.contacts.map((c) => ({
+      ...c,
+      decides: c.decides.filter((t) => t !== "policies"),
+    })),
+  });
+  assert.equal(contactFor(noPolicies, "policies").name, "Maya Chen");
 });
 
 test("an earlier pets answer does not hide the conflict a later source creates", () => {
-  let s = sendAll(initialState);
-  s = answer(
-    s,
-    "q-pets",
-    "Per property: two cats at Maple Grove, one cat at Willow Court",
+  let s = runConsistencyCheck(
+    addSource(runConsistencyCheck(upload(started(), "transcript", "sop"))),
   );
-  s = runConsistencyCheck(addSource(s));
-  const pets = consistencyReport(s).conflicts.find((c) => c.id === "pet-limit");
-  assert.equal(pets.resolved, false);
-  s = reopenQuestion(s, "q-pets");
-  assert.equal(
-    s.questions.find((q) => q.id === "q-pets").status,
-    "Ready to send",
-  );
-  s = sendRequest(s, "Property manager", ["q-pets"]);
+  s = approveAndSend(s);
   s = answer(s, "q-pets", "Two cats at both properties");
   assert.equal(
     consistencyReport(s).conflicts.find((c) => c.id === "pet-limit").resolved,
     true,
   );
+  s = reopenQuestion(s, "q-pets");
+  assert.equal(
+    s.questions.find((q) => q.id === "q-pets").status,
+    "Ready to send",
+  );
 });
 
-test("customer answers are evidence until approved, and never overwrite other items", () => {
-  const sent = sendAll(initialState);
-  const first = submitAnswer(
-    sent,
-    "q-emergency",
-    "On-call supervisor",
-    "answer",
+test("customer answers are evidence until approved and never overwrite other facts", () => {
+  const s = approveAndSend(
+    runConsistencyCheck(upload(started(), "transcript", "sop")),
   );
-  assert.equal(
-    first.facts.find((f) => f.id === "T2").lifecycle,
-    "Needs clarification",
-  );
+  const first = submitAnswer(s, "q-emergency", "On-call supervisor", "answer");
+  assert.equal(first.facts.find((f) => f.id === "T2").approval, "Not reviewed");
   const approved = reviewAnswer(first, "q-emergency");
   const t2 = approved.facts.find((f) => f.id === "T2");
   const s1 = approved.facts.find((f) => f.id === "S1");
   assert.equal(t2.approval, "Customer approved");
   assert.notEqual(t2.value, s1.value);
-  assert.match(s1.value, /Collect property and unit/);
   assert.equal(s1.customerAnswer.value, "On-call supervisor");
-  // an empty fact takes the customer's answer as its value
-  const i2 = answer(sent, "q-integration", "Maya authorizes").facts.find(
+  const i2 = answer(s, "q-integration", "Maya authorizes").facts.find(
     (f) => f.id === "I2",
   );
-  assert.equal(i2.value, "Maya authorizes");
-});
-
-test("unknown or delegated answers never confirm; unsent questions reject submissions", () => {
+  assert.equal(
+    i2.value,
+    "Maya authorizes",
+    "an empty fact takes the customer's answer",
+  );
   assert.equal(
     submitAnswer(initialState, "q-emergency", "x", "answer"),
     initialState,
   );
-  const unknown = submitAnswer(
-    sendAll(initialState),
-    "q-emergency",
-    "",
-    "unknown",
-  );
-  assert.equal(reviewAnswer(unknown, "q-emergency"), unknown);
-  assert.equal(readiness(unknown).ready, false);
 });
 
-test("requests are per recipient and only carry approved questions", () => {
-  const s = approveAll(initialState);
-  assert.equal(
-    sendRequest(s, "Operations lead", ["q-pets"]),
-    s,
-    "wrong recipient",
+test("defaults apply only to non-critical sent questions", () => {
+  let s = runConsistencyCheck(
+    addSource(runConsistencyCheck(upload(started(), "transcript", "sop"))),
   );
-  const sent = sendRequest(s, "Operations lead", [
-    "q-emergency",
-    "q-integration",
-  ]);
-  assert.equal(sent.requests[0].recipientName, "Maya Chen");
-  assert.equal(
-    sendRequest(sent, "Operations lead", ["q-emergency"]),
-    sent,
-    "already sent",
-  );
-});
-
-test("defaults apply only to non-critical questions that were sent and unanswered", () => {
-  const sent = sendAll(initialState);
-  assert.equal(
-    applyDefault(sent, "q-emergency"),
-    sent,
-    "critical never defaults",
-  );
-  assert.equal(applyDefault(initialState, "q-pets"), initialState, "not sent");
-  const d = applyDefault(sent, "q-pets");
+  s = approveAndSend(s);
+  assert.equal(applyDefault(s, "q-emergency"), s, "critical never defaults");
+  const d = applyDefault(s, "q-pets");
   assert.equal(d.questions.find((q) => q.id === "q-pets").status, "Defaulted");
-  assert.match(
-    d.facts.find((f) => f.id === "F3").note,
-    /not confirmed by the customer/,
-  );
   assert.ok(readiness(d).risks.some((r) => r.includes("default")));
 });
 
-test("gaps can be waived with a reason, but critical gaps cannot", () => {
-  assert.equal(waiveFact(initialState, "F4", " "), initialState);
-  assert.equal(waiveFact(initialState, "I2", "skip"), initialState, "critical");
+test("gaps can be waived with a reason but critical gaps cannot", () => {
+  assert.equal(
+    waiveFact(started(), "F4", " ").facts.find((f) => f.id === "F4").waived,
+    undefined,
+  );
+  assert.equal(
+    waiveFact(started(), "I2", "skip").facts.find((f) => f.id === "I2").waived,
+    undefined,
+  );
   assert.ok(
-    waiveFact(initialState, "F4", "later").facts.find((f) => f.id === "F4")
-      .waived,
+    waiveFact(started(), "F4", "later").facts.find((f) => f.id === "F4").waived,
   );
 });
 
-test("test cases come only from reviewed facts, and results go stale when a fact changes", () => {
+test("assignments show who each open item belongs to, on the customer and team side", () => {
   assert.equal(
-    testCases(initialState).every(
-      (t) => !["G3", "F2", "S2", "I4"].includes(t.factId),
-    ),
-    true,
+    assignments(started()).filter((a) => a.side === "customer").length,
+    0,
+    "nothing is assigned before the request",
   );
+  let s = sendDocumentRequest(started());
+  const docs = assignments(s).filter((a) => a.side === "customer");
+  assert.equal(
+    docs.length,
+    4,
+    "four of the five documents come from the customer",
+  );
+  assert.equal(docs.find((a) => a.id === "doc-roster").assignee, "Jordan Lee");
+  assert.equal(docs.find((a) => a.id === "doc-sop").assignee, "Maya Chen");
+  s = approveAndSend(
+    runConsistencyCheck(
+      upload(s, "transcript", "sop", "roster", "faq", "scan"),
+    ),
+  );
+  const qs = assignments(s).filter((a) => a.id.startsWith("q-"));
+  assert.ok(
+    qs.length >= 2 &&
+      qs.every((a) => a.side === "customer" && a.assignee === "Maya Chen"),
+  );
+  assert.ok(
+    assignments(s)
+      .filter((a) => a.side === "team")
+      .every((a) => a.assignee === "Avery Morgan"),
+  );
+  assert.ok(
+    !assignments(s).some((a) => a.id === "doc-scan"),
+    "our action first, not the customer's",
+  );
+  s = requestReadableCopy(s);
+  assert.ok(assignments(s).some((a) => a.id === "doc-scan-copy"));
+  assert.equal(documentRequests.length, 5);
+});
+
+test("steps are derived and follow the journey from client details to go-live", () => {
+  assert.equal(currentStep(started()).n, 1);
+  let s = sendDocumentRequest(started());
+  assert.equal(currentStep(s).n, 2);
+  s = upload(s, "transcript", "sop", "roster", "faq", "scan");
+  assert.equal(currentStep(s).n, 2, "extraction still has to be reviewed");
+  for (const id of ["transcript", "sop", "roster", "faq"])
+    s = reviewSource(s, id);
+  assert.equal(currentStep(s).n, 3);
+  assert.equal(nextActions(s)[0].id, "run-check");
+  assert.deepEqual(
+    onboardingSteps(s).map((x) => x.status),
+    ["Done", "Done", "Current", "Upcoming", "Upcoming"],
+  );
+});
+
+test("the customer's roles and routing rules are derived and show disputes", () => {
+  const empty = routingTable(started());
+  assert.ok(
+    empty.every(
+      (r) =>
+        r.status === "Not received" || r.scenario === "Unsupported question",
+    ),
+  );
+  let s = upload(started(), "transcript", "sop", "roster", "faq");
+  assert.equal(
+    routingTable(s).find((r) => r.scenario.startsWith("After-hours")).status,
+    "Known",
+  );
+  s = runConsistencyCheck(s);
+  const row = routingTable(s).find((r) => r.scenario.startsWith("After-hours"));
+  assert.equal(row.status, "Disputed");
+  assert.match(row.who, /sources disagree/);
+});
+
+test("test results go stale when a fact changes", () => {
   let s = prepared();
   assert.equal(readiness(s).ready, true);
   const tc = testCases(s).find(
@@ -262,83 +365,53 @@ test("test cases come only from reviewed facts, and results go stale when a fact
   );
 });
 
-test("launch checklist and steps reach the end only when everything is done and passing", () => {
+test("launch needs prerequisites, configuration and passing tests", () => {
   let s = prepared();
+  assert.equal(nextActions(s)[0].id, "configure");
+  for (const f of s.facts) s = markConfigured(s, f.id);
+  assert.equal(nextActions(s)[0].id, "tests");
+  assert.equal(currentStep(s).n, 4);
   assert.equal(
     launchChecklist(s).every((c) => c.pass),
     false,
   );
-  for (const f of s.facts) s = markConfigured(s, f.id);
-  assert.equal(currentStep(s).n, 4);
   for (const t of testCases(s)) s = recordTest(s, t.id, "Pass");
   assert.equal(
     launchChecklist(s).every((c) => c.pass),
     true,
   );
   assert.equal(currentStep(s).n, 5);
-  assert.equal(s.facts.find((f) => f.id === "T3").lifecycle, "Configured");
+  const without = togglePrereq(s, "phone");
+  assert.equal(
+    launchChecklist(without).find((c) => c.id === "prereqs").pass,
+    false,
+  );
 });
 
-test("the process log counts real manual actions and flags three-times candidates", () => {
-  const before = processCounts(initialState).find((p) => p.id === "configure");
-  assert.equal(
-    before.candidate,
-    false,
-    "2 earlier onboardings is below the threshold",
-  );
+test("the process log counts real manual actions", () => {
   let s = prepared();
-  s = markConfigured(s, "T3");
-  const configure = processCounts(s).find((p) => p.id === "configure");
-  assert.equal(configure.live, 1);
-  assert.equal(configure.candidate, true, "2 earlier + 1 now = 3");
   assert.equal(
-    processCounts(s).find((p) => p.id === "compare").candidate,
+    processCounts(s).find((p) => p.id === "configure").candidate,
     false,
-    "already automated",
   );
+  s = markConfigured(s, "T3");
+  assert.equal(
+    processCounts(s).find((p) => p.id === "configure").candidate,
+    true,
+    "2 earlier + 1 now = 3",
+  );
+  assert.ok(processCounts(s).find((p) => p.id === "review-fact").live > 0);
 });
 
-test("post-launch issues become test cases once", () => {
+test("post-launch issues become test cases once; outputs derive from state", () => {
   const once = convertIssue(initialState, "i1");
   assert.equal(
     testCases(once).some((t) => t.id === "T-i1"),
     true,
   );
   assert.equal(convertIssue(once, "i1"), once);
-});
-
-test("outputs: check-in, CSV rows and Slack text are derived from state", () => {
-  assert.match(weeklyCheckIn(initialState), /step 3 of 5/);
-  const csv = exportCsv(initialState).trim().split("\n");
+  assert.match(weeklyCheckIn(started()), /stage 1 of 5/);
+  const csv = exportCsv(started()).trim().split("\n");
   assert.equal(csv.length, 21);
-  assert.match(csv[0], /^fact_id,area,fact,value,status,approval,owner/);
-});
-
-test("the kickoff agenda covers every required fact and marks answered ones", () => {
-  const agenda = kickoffAgenda(initialState);
-  const items = agenda.flatMap((a) => a.items);
-  assert.equal(items.length, 20);
-  assert.equal(items.filter((i) => i.covered).length, 16);
-  assert.equal(agenda.length, 5);
-});
-
-test("document requests report received, unreadable and missing sources", () => {
-  const sources = allSources(initialState);
-  const status = Object.fromEntries(
-    documentRequests.map((d) => [
-      d.label,
-      documentStatus(initialState, d.sourceId, sources),
-    ]),
-  );
-  assert.equal(status["Kickoff call recording"], "Received");
-  assert.equal(status["Move-in checklist"], "Needs a readable copy");
-  assert.equal(status["Property-system owner and access contact"], "Missing");
-});
-
-test("configuring comes before testing in the next actions", () => {
-  const s = prepared();
-  assert.equal(nextActions(s)[0].id, "configure");
-  let done = s;
-  for (const f of done.facts) done = markConfigured(done, f.id);
-  assert.equal(nextActions(done)[0].id, "tests");
+  assert.match(csv[0], /^fact_id,area,fact,lands_in,value/);
 });

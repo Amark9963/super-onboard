@@ -1,9 +1,10 @@
-// Pure, deterministic state for the onboarding-process prototype. No network, no backend:
-// everything here is simulated, fictional data (Oakwood Property Group). Keep this file free of
-// TypeScript-only runtime syntax (enums, namespaces) so Node can run it directly in tests.
+// Pure, deterministic state for the onboarding prototype. No network, no backend:
+// everything here is simulated, fictional data. Keep this file free of TypeScript-only
+// runtime syntax (enums, namespaces) so Node can run it directly in tests.
 //
-// The central object is the intake spec: 20 required facts across five areas. Each fact has a
-// source, an owner, a lifecycle status and a separate approval state.
+// An onboarding starts from an EMPTY intake spec (20 required facts in five areas). Uploading a
+// document runs a simulated extraction that fills facts with citations; the consistency check then
+// finds contradictions; questions go to the customer contact who decides that topic.
 
 export type Area =
   "Goals" | "Team & rules" | "FAQs" | "Scenarios" | "Integrations";
@@ -17,18 +18,55 @@ export type Lifecycle =
   | "Tested";
 export type Approval =
   "Not reviewed" | "Specialist reviewed" | "Customer approved";
+/** Where a fact ends up in the voice-agent platform (terms from Super's public setup pages). */
+export type Landing =
+  "Context" | "Knowledge" | "Call routing" | "Skill" | "Integration";
+/** What a customer contact is able to decide. Questions go to the person who decides the topic. */
+export type Topic = "routing" | "integrations" | "policies" | "documents";
 
+export type Contact = {
+  name: string;
+  role: string;
+  email: string;
+  decides: Topic[];
+};
+export type Client = {
+  name: string;
+  vertical: string;
+  plan: "After Hours" | "24/7" | "Concierge";
+  scope: string;
+  properties: { name: string; units: number }[];
+  contacts: Contact[];
+  owner: string;
+  kickoff: string;
+  goLive: string;
+  hours: string;
+  channels: string[];
+  systems: string[];
+};
+
+export type Fill = {
+  factId: string;
+  value: string;
+  anchor: string;
+  evidence: string;
+};
 export type Source = {
   id: string;
   title: string;
   type: string;
   received: string;
   suppliedBy: string;
+  topic: Topic;
+  /** "team" artifacts (our call recording, our draft prompt) are not requested from the customer. */
+  origin: "customer" | "team";
   parse: "Parsed" | "Needs attention";
   flagged?: boolean;
+  later?: boolean;
   anchor: string;
   excerpt: string;
   note?: string;
+  fills: Fill[];
 };
 
 /** A statement a source makes about how something should work. The consistency check compares them. */
@@ -48,6 +86,7 @@ export type Fact = {
   id: string;
   area: Area;
   label: string;
+  lands: Landing;
   value: string | null;
   sourceId: string | null;
   anchor: string;
@@ -83,7 +122,9 @@ export type Question = {
   text: string;
   why: string;
   source: string;
-  recipientRole: string;
+  topic: Topic;
+  /** Name of the customer contact this is assigned to. */
+  recipient: string;
   status: QuestionStatus;
   factIds: string[];
   options: string[];
@@ -112,8 +153,7 @@ export type Resolution = {
 };
 export type SentRequest = {
   id: string;
-  recipientRole: string;
-  recipientName: string;
+  recipient: string;
   questionIds: string[];
 };
 
@@ -145,6 +185,7 @@ export type Issue = {
 };
 
 export type PrototypeState = {
+  client: Client | null;
   facts: Fact[];
   questions: Question[];
   requests: SentRequest[];
@@ -152,6 +193,10 @@ export type PrototypeState = {
   tests: Record<string, TestRecord>;
   extraTests: TestCase[];
   addedSources: string[];
+  reviewedSources: string[];
+  docsRequested: boolean;
+  copyRequested: boolean;
+  prereqs: Record<string, boolean>;
   /** Bumps whenever a new source arrives; a check run before that is stale. */
   sourceRevision: number;
   /** sourceRevision at the last consistency check; null means it has never been run. */
@@ -166,40 +211,159 @@ export const areas: Area[] = [
   "Scenarios",
   "Integrations",
 ];
-
-export const recipients: Record<string, { name: string }> = {
-  "Operations lead": { name: "Maya Chen" },
-  "Property manager": { name: "Priya Shah" },
-};
-
+export const topics: { id: Topic; label: string }[] = [
+  { id: "routing", label: "Routing and escalation" },
+  { id: "integrations", label: "Integrations and access" },
+  { id: "policies", label: "Property policies" },
+  { id: "documents", label: "Documents and rosters" },
+];
 export const OWNER = "Avery Morgan";
 
+export const demoClient: Client = {
+  name: "Oakwood Property Group",
+  vertical: "Residential property management",
+  plan: "Concierge",
+  scope: "2 properties · 310 units",
+  properties: [
+    { name: "Maple Grove", units: 180 },
+    { name: "Willow Court", units: 130 },
+  ],
+  contacts: [
+    {
+      name: "Maya Chen",
+      role: "Operations lead",
+      email: "maya.chen@oakwood.example",
+      decides: ["routing", "integrations"],
+    },
+    {
+      name: "Priya Shah",
+      role: "Property manager",
+      email: "priya.shah@oakwood.example",
+      decides: ["policies"],
+    },
+    {
+      name: "Jordan Lee",
+      role: "Leasing coordinator",
+      email: "jordan.lee@oakwood.example",
+      decides: ["documents"],
+    },
+  ],
+  owner: OWNER,
+  kickoff: "Oct 22, 2026",
+  goLive: "Nov 20, 2026",
+  hours: "Leasing desk Mon–Fri, 9 a.m.–5 p.m.",
+  channels: ["Inbound voice"],
+  systems: ["Property management system (PMS)", "External scheduling system"],
+};
+
 // ---------------------------------------------------------------------------------------------
-// Sources and claims
+// Sources (sample documents), their simulated extraction, and the claims they make
 // ---------------------------------------------------------------------------------------------
 
-export const baseSources: Source[] = [
+export const sourceCatalog: Source[] = [
+  {
+    id: "transcript",
+    title: "Implementation kickoff call",
+    type: "Transcript · TXT",
+    received: "Oct 22, 2026",
+    suppliedBy: "Implementation team",
+    topic: "documents",
+    origin: "team",
+    parse: "Parsed",
+    anchor: "18:42 · Maya Chen",
+    excerpt:
+      "On weekends at Maple Grove, the front desk usually handles urgent calls first. I need to check whether that still applies to flooding emergencies.",
+    fills: [
+      {
+        factId: "G1",
+        value:
+          "Reduce unanswered resident calls while keeping people in the loop for urgent issues.",
+        anchor: "Kickoff call · 04:15",
+        evidence:
+          "The team wants fewer missed resident calls without replacing its human escalation process.",
+      },
+      {
+        factId: "G3",
+        value:
+          "In: leasing FAQs, maintenance requests, office hours. Out: payment disputes, legal questions.",
+        anchor: "Kickoff call · 11:20",
+        evidence:
+          "We want it to handle the routine questions, not billing disputes.",
+      },
+      {
+        factId: "G4",
+        value: "Maple Grove and Willow Court; inbound voice only.",
+        anchor: "Kickoff call · 02:10",
+        evidence: "Two properties to start, phone calls only.",
+      },
+      {
+        factId: "S2",
+        value:
+          "Collect unit, issue and access permission; create a work-order request for the team.",
+        anchor: "Kickoff call · 22:05",
+        evidence:
+          "For regular repairs, we just need the unit, the problem and whether we can enter.",
+      },
+      {
+        factId: "I1",
+        value:
+          "Resident and work-order system (PMS); product name to be confirmed.",
+        anchor: "Kickoff call · 32:10",
+        evidence:
+          "We use our property management system for resident and work-order context.",
+      },
+    ],
+  },
   {
     id: "sop",
     title: "Oakwood operations handbook",
     type: "PDF · 24 pages",
     received: "Oct 22, 2026",
     suppliedBy: "Maya Chen",
+    topic: "routing",
+    origin: "customer",
     parse: "Parsed",
     anchor: "p. 7 · Pets / p. 12 · Emergency calls",
     excerpt:
       "For after-hours emergencies, transfer the caller to the on-call maintenance supervisor. If unavailable, take a callback number and alert the property manager.",
-  },
-  {
-    id: "transcript",
-    title: "Implementation kickoff call",
-    type: "Transcript · TXT",
-    received: "Oct 24, 2026",
-    suppliedBy: "Maya Chen",
-    parse: "Parsed",
-    anchor: "18:42 · Maya Chen",
-    excerpt:
-      "On weekends at Maple Grove, the front desk usually handles urgent calls first. I need to check whether that still applies to flooding emergencies.",
+    fills: [
+      {
+        factId: "T2",
+        value:
+          "Handbook: transfer after-hours emergencies to the on-call maintenance supervisor.",
+        anchor: "Handbook · p. 12",
+        evidence:
+          "For after-hours emergencies, transfer the caller to the on-call maintenance supervisor.",
+      },
+      {
+        factId: "T3",
+        value:
+          "On-call maintenance supervisor, then property manager; otherwise take a callback number.",
+        anchor: "Handbook · p. 12",
+        evidence:
+          "If unavailable, take a callback number and alert the property manager.",
+      },
+      {
+        factId: "F2",
+        value: "Up to two cats.",
+        anchor: "Handbook · p. 7",
+        evidence: "Maple Grove: up to two cats.",
+      },
+      {
+        factId: "F3",
+        value: "One cat with written approval.",
+        anchor: "Handbook · p. 7",
+        evidence: "Willow Court: one cat with written approval.",
+      },
+      {
+        factId: "S1",
+        value:
+          "Collect property and unit, callback number and safety concern; escalation route depends on weekend routing.",
+        anchor: "Handbook · p. 12",
+        evidence:
+          "If unavailable, take a callback number and alert the property manager.",
+      },
+    ],
   },
   {
     id: "roster",
@@ -207,10 +371,30 @@ export const baseSources: Source[] = [
     type: "Spreadsheet · XLSX",
     received: "Oct 23, 2026",
     suppliedBy: "Jordan Lee",
+    topic: "documents",
+    origin: "customer",
     parse: "Parsed",
     anchor: "Escalation sheet · B4–F8",
     excerpt:
       "Maintenance supervisor: on-call role. Property manager: fallback role. Weekend schedule: maintained in the external scheduling system; do not copy a static roster.",
+    fills: [
+      {
+        factId: "T1",
+        value:
+          "Maintenance supervisor (on-call), property manager (fallback), leasing desk (office hours).",
+        anchor: "Escalation sheet · B4–F8",
+        evidence:
+          "Maintenance supervisor: on-call role. Property manager: fallback role.",
+      },
+      {
+        factId: "T4",
+        value:
+          "Maintained in the external scheduling system; do not copy a static roster.",
+        anchor: "Escalation sheet · row 8",
+        evidence:
+          "Weekend schedule: maintained in the external scheduling system.",
+      },
+    ],
   },
   {
     id: "faq",
@@ -218,22 +402,22 @@ export const baseSources: Source[] = [
     type: "Website · HTML",
     received: "Oct 25, 2026",
     suppliedBy: "Public oakwood.example",
+    topic: "documents",
+    origin: "customer",
     parse: "Parsed",
     anchor: "FAQ / office-hours",
     excerpt:
       "The leasing desk is open Monday through Friday, 9 a.m.–5 p.m. Messages received outside these hours are returned the next business day.",
-  },
-  {
-    id: "prompt-draft",
-    title: "Draft agent instructions v0.3",
-    type: "Internal draft · Markdown",
-    received: "Oct 28, 2026",
-    suppliedBy: "Avery Morgan",
-    parse: "Parsed",
-    anchor: "§3 Transfers / §7 Weekend rules",
-    excerpt:
-      "§3: Always transfer after-hours emergency calls to the on-call supervisor. §7: On weekends do not transfer calls; take a callback number and promise a call back.",
-    note: "Written by the implementation team, not the customer.",
+    fills: [
+      {
+        factId: "F1",
+        value:
+          "Monday–Friday, 9 a.m.–5 p.m.; after-hours messages return next business day.",
+        anchor: "Resident FAQ · office-hours",
+        evidence:
+          "The leasing desk is open Monday through Friday, 9 a.m.–5 p.m.",
+      },
+    ],
   },
   {
     id: "scan",
@@ -241,26 +425,64 @@ export const baseSources: Source[] = [
     type: "PDF · scanned",
     received: "Oct 26, 2026",
     suppliedBy: "Jordan Lee",
+    topic: "documents",
+    origin: "customer",
     parse: "Needs attention",
     flagged: true,
     anchor: "No readable text",
     excerpt: "No text could be extracted from this scan.",
     note: "Request a text-based copy, or waive the fact with a reason.",
+    fills: [],
+  },
+  {
+    id: "prompt-draft",
+    title: "Draft agent instructions v0.3",
+    type: "Internal draft · Markdown",
+    received: "Oct 28, 2026",
+    suppliedBy: "Implementation team",
+    topic: "documents",
+    origin: "team",
+    parse: "Parsed",
+    anchor: "§3 Transfers / §7 Weekend rules",
+    excerpt:
+      "§3: Always transfer after-hours emergency calls to the on-call supervisor. §7: On weekends do not transfer calls; take a callback number and promise a call back.",
+    note: "Written by the implementation team, not the customer.",
+    fills: [],
+  },
+  {
+    id: "email-maya",
+    title: "Email from Maya Chen",
+    type: "Email · EML",
+    received: "Oct 29, 2026",
+    suppliedBy: "Maya Chen",
+    topic: "routing",
+    origin: "customer",
+    parse: "Parsed",
+    later: true,
+    anchor: "Email body",
+    excerpt:
+      "Our target is 90% of calls answered during staffed hours. Residents locked out of their unit should go to the on-call maintenance supervisor. Both properties allow two cats.",
+    note: "Simulated late-arriving source.",
+    fills: [
+      {
+        factId: "G2",
+        value: "Answer 90% of calls during staffed hours.",
+        anchor: "Email · first line",
+        evidence: "Our target is 90% of calls answered during staffed hours.",
+      },
+      {
+        factId: "S3",
+        value: "Transfer to the on-call maintenance supervisor.",
+        anchor: "Email · second line",
+        evidence:
+          "Residents locked out of their unit should go to the on-call maintenance supervisor.",
+      },
+    ],
   },
 ];
-
-export const lateSource: Source = {
-  id: "email-maya",
-  title: "Email from Maya Chen",
-  type: "Email · EML",
-  received: "Oct 29, 2026",
-  suppliedBy: "Maya Chen",
-  parse: "Parsed",
-  anchor: "Email body",
-  excerpt:
-    "Our target is 90% of calls answered during staffed hours. Residents locked out of their unit should go to the on-call maintenance supervisor. Both properties allow two cats.",
-  note: "Simulated late-arriving source.",
-};
+export const LATE_ID = "email-maya";
+export const lateSource = sourceCatalog.find((s) => s.id === LATE_ID)!;
+export const baseSources = sourceCatalog.filter((s) => !s.later);
 
 export const claims: Claim[] = [
   {
@@ -347,192 +569,128 @@ export const claims: Claim[] = [
 ];
 
 // ---------------------------------------------------------------------------------------------
-// Initial state: 13 known, 3 awaiting clarification, 4 empty; 3 customer-confirmed
+// The empty spec: 20 required facts. Three start with a template default from our own standard.
 // ---------------------------------------------------------------------------------------------
 
 const fact = (
-  f: Partial<Fact> & Pick<Fact, "id" | "area" | "label">,
+  f: Partial<Fact> & Pick<Fact, "id" | "area" | "label" | "lands">,
 ): Fact => ({
   value: null,
   sourceId: null,
   anchor: "Not yet received",
   evidence: "",
   owner: OWNER,
-  lifecycle: "Extracted",
+  lifecycle: "Not received",
   approval: "Not reviewed",
   rev: 1,
   ...f,
 });
 
-const initialFacts: Fact[] = [
+const templateDefault = {
+  lifecycle: "Extracted" as const,
+  sourceId: null,
+  anchor: "Implementation team template",
+};
+
+const emptyFacts = (): Fact[] => [
   fact({
     id: "G1",
     area: "Goals",
     label: "Primary objective",
-    value:
-      "Reduce unanswered resident calls while keeping people in the loop for urgent issues.",
-    sourceId: "transcript",
-    anchor: "Kickoff call · 04:15",
-    evidence:
-      "The team wants fewer missed resident calls without replacing its human escalation process.",
-    lifecycle: "Customer confirmed",
-    approval: "Customer approved",
+    lands: "Context",
   }),
   fact({
     id: "G2",
     area: "Goals",
     label: "Success measure",
-    lifecycle: "Not received",
+    lands: "Context",
     note: "No numeric target has been given.",
   }),
   fact({
     id: "G3",
     area: "Goals",
     label: "Call types in and out of scope",
-    value:
-      "In: leasing FAQs, maintenance requests, office hours. Out: payment disputes, legal questions.",
-    sourceId: "transcript",
-    anchor: "Kickoff call · 11:20",
-    evidence:
-      "We want it to handle the routine questions, not billing disputes.",
+    lands: "Context",
   }),
   fact({
     id: "G4",
     area: "Goals",
     label: "Properties and channels",
-    value: "Maple Grove and Willow Court; inbound voice only.",
-    sourceId: "transcript",
-    anchor: "Kickoff call · 02:10",
-    evidence: "Two properties to start, phone calls only.",
-    lifecycle: "Customer confirmed",
-    approval: "Customer approved",
+    lands: "Context",
   }),
   fact({
     id: "T1",
     area: "Team & rules",
     label: "Roles and responsibilities",
-    value:
-      "Maintenance supervisor (on-call), property manager (fallback), leasing desk (office hours).",
-    sourceId: "roster",
-    anchor: "Escalation sheet · B4–F8",
-    evidence:
-      "Maintenance supervisor: on-call role. Property manager: fallback role.",
-    lifecycle: "Customer confirmed",
-    approval: "Customer approved",
+    lands: "Call routing",
   }),
   fact({
     id: "T2",
     area: "Team & rules",
     label: "Weekend emergency routing",
-    value:
-      "Candidate only: on-call supervisor per the handbook; the kickoff call says front desk first.",
-    sourceId: "sop",
-    anchor: "Handbook · p. 12 + kickoff call 18:42",
-    evidence:
-      "For after-hours emergencies, transfer the caller to the on-call maintenance supervisor.",
-    lifecycle: "Needs clarification",
+    lands: "Call routing",
     critical: true,
-    note: "Two sources disagree.",
   }),
   fact({
     id: "T3",
     area: "Team & rules",
     label: "Escalation order and fallback",
-    value:
-      "On-call maintenance supervisor, then property manager; otherwise take a callback number.",
-    sourceId: "sop",
-    anchor: "Handbook · p. 12",
-    evidence:
-      "If unavailable, take a callback number and alert the property manager.",
-    approval: "Specialist reviewed",
+    lands: "Call routing",
   }),
   fact({
     id: "T4",
     area: "Team & rules",
     label: "Weekend coverage source",
-    value:
-      "Maintained in the external scheduling system; do not copy a static roster.",
-    sourceId: "roster",
-    anchor: "Escalation sheet · row 8",
-    evidence: "Weekend schedule: maintained in the external scheduling system.",
-    approval: "Specialist reviewed",
+    lands: "Call routing",
   }),
-  fact({
-    id: "F1",
-    area: "FAQs",
-    label: "Office hours",
-    value:
-      "Monday–Friday, 9 a.m.–5 p.m.; after-hours messages return next business day.",
-    sourceId: "faq",
-    anchor: "Resident FAQ · office-hours",
-    evidence: "The leasing desk is open Monday through Friday, 9 a.m.–5 p.m.",
-    approval: "Specialist reviewed",
-  }),
+  fact({ id: "F1", area: "FAQs", label: "Office hours", lands: "Knowledge" }),
   fact({
     id: "F2",
     area: "FAQs",
     label: "Pet policy, Maple Grove",
-    value: "Up to two cats.",
-    sourceId: "sop",
-    anchor: "Handbook · p. 7",
-    evidence: "Maple Grove: up to two cats.",
+    lands: "Knowledge",
   }),
   fact({
     id: "F3",
     area: "FAQs",
     label: "Pet policy, Willow Court",
-    value: "One cat with written approval.",
-    sourceId: "sop",
-    anchor: "Handbook · p. 7",
-    evidence: "Willow Court: one cat with written approval.",
+    lands: "Knowledge",
   }),
   fact({
     id: "F4",
     area: "FAQs",
     label: "Move-in checklist",
-    sourceId: "scan",
-    anchor: "Scanned PDF · no readable text",
-    lifecycle: "Not received",
-    note: "The scan has no extractable text. Request a text copy or waive with a reason.",
+    lands: "Knowledge",
+    note: "Not yet received.",
   }),
   fact({
     id: "S1",
     area: "Scenarios",
     label: "Flooding emergency",
-    value:
-      "Collect property and unit, callback number and safety concern; escalation route depends on weekend routing.",
-    sourceId: "sop",
-    anchor: "Handbook · p. 12",
-    evidence:
-      "If unavailable, take a callback number and alert the property manager.",
-    lifecycle: "Needs clarification",
+    lands: "Skill",
     critical: true,
   }),
   fact({
     id: "S2",
     area: "Scenarios",
     label: "Maintenance request",
-    value:
-      "Collect unit, issue and access permission; create a work-order request for the team.",
-    sourceId: "transcript",
-    anchor: "Kickoff call · 22:05",
-    evidence:
-      "For regular repairs, we just need the unit, the problem and whether we can enter.",
+    lands: "Skill",
   }),
   fact({
     id: "S3",
     area: "Scenarios",
     label: "Locked out of unit",
-    lifecycle: "Not received",
+    lands: "Skill",
     note: "Not yet discussed.",
   }),
   fact({
     id: "S4",
     area: "Scenarios",
     label: "Unsupported question",
+    lands: "Skill",
+    ...templateDefault,
     value:
       "Say the team will follow up, take a callback number, and return the call next business day.",
-    anchor: "Implementation team standard",
     evidence: "Our standard handling for anything outside the knowledge base.",
     approval: "Specialist reviewed",
   }),
@@ -540,19 +698,13 @@ const initialFacts: Fact[] = [
     id: "I1",
     area: "Integrations",
     label: "Property-system name",
-    value:
-      "Resident and work-order system (PMS); product name to be confirmed.",
-    sourceId: "transcript",
-    anchor: "Kickoff call · 32:10",
-    evidence:
-      "We use our property management system for resident and work-order context.",
-    approval: "Specialist reviewed",
+    lands: "Integration",
   }),
   fact({
     id: "I2",
     area: "Integrations",
     label: "Authorization owner",
-    lifecycle: "Not received",
+    lands: "Integration",
     critical: true,
     note: "Nobody has said who can authorize access. No credentials are requested or stored here.",
   }),
@@ -560,91 +712,66 @@ const initialFacts: Fact[] = [
     id: "I3",
     area: "Integrations",
     label: "Allowed operations",
+    lands: "Integration",
+    critical: true,
+    ...templateDefault,
+    lifecycle: "Needs clarification",
     value:
       "Proposed by us: read-only lookup of resident and work-order status.",
-    anchor: "Implementation team proposal",
     evidence: "Our proposal; the customer has not agreed.",
-    lifecycle: "Needs clarification",
-    critical: true,
   }),
   fact({
     id: "I4",
     area: "Integrations",
     label: "Failure fallback",
+    lands: "Integration",
+    ...templateDefault,
     value: "Proposed by us: take a message; never guess live data.",
-    anchor: "Implementation team proposal",
     evidence: "Our proposal; the customer has not reviewed it.",
   }),
 ];
 
-export const initialState: PrototypeState = {
-  facts: initialFacts,
+/** Launch prerequisites typical for a voice agent on this kind of platform (from public setup pages). */
+export const prereqItems = [
+  { id: "phone", label: "Phone number selected and routing set" },
+  { id: "sms", label: "SMS registration (10DLC) submitted" },
+  { id: "pms", label: "Property-system integration connected" },
+  { id: "slack", label: "Slack channel for call logs connected" },
+  {
+    id: "voice",
+    label: "Voice and language settings confirmed (English and Spanish)",
+  },
+  { id: "fair", label: "Fair Housing guardrails reviewed" },
+];
+
+const freshOnboarding = (): Omit<PrototypeState, "client"> => ({
+  facts: emptyFacts(),
+  questions: [],
   requests: [],
   resolutions: {},
   tests: {},
   extraTests: [],
   addedSources: [],
+  reviewedSources: [],
+  docsRequested: false,
+  copyRequested: false,
+  prereqs: {},
   sourceRevision: 1,
   consistencyRun: null,
   manualLog: {},
-  questions: [
-    {
-      id: "q-emergency",
-      title: "Weekend flooding route",
-      text: "For a flooding emergency at Maple Grove on a weekend, who should the agent route the caller to first?",
-      why: "The handbook and the kickoff call give different weekend directions for the same property.",
-      source: "Handbook p. 12 + kickoff call 18:42",
-      recipientRole: "Operations lead",
-      status: "AI draft",
-      factIds: ["T2", "S1"],
-      options: [
-        "Route to the on-call maintenance supervisor first",
-        "Route to the front desk first, then the supervisor",
-        "Something else (explain below)",
-      ],
-      revisions: [],
-      reviewedRevision: 0,
-      conflictId: "weekend-flood-route",
-    },
-    {
-      id: "q-integration",
-      title: "Property-system access",
-      text: "Who can authorize read-only lookups in the property system, and what should the agent do when a lookup is unavailable?",
-      why: "The authorization owner is unknown and the allowed operations are only our proposal.",
-      source: "Kickoff call 32:10",
-      recipientRole: "Operations lead",
-      status: "AI draft",
-      factIds: ["I2", "I3"],
-      options: [
-        "Maya Chen authorizes read-only lookups",
-        "Someone else authorizes (name them below)",
-        "No lookups for now",
-      ],
-      revisions: [],
-      reviewedRevision: 0,
-    },
-    {
-      id: "q-pets",
-      title: "Pet limits by property",
-      text: "What is the correct pet limit at each property, including any exceptions?",
-      why: "The handbook sets limits per property; a later email says both allow two cats.",
-      source: "Handbook p. 7",
-      recipientRole: "Property manager",
-      status: "AI draft",
-      factIds: ["F2", "F3"],
-      options: [
-        "Per property: two cats at Maple Grove, one cat at Willow Court",
-        "Two cats at both properties",
-        "Something else (explain below)",
-      ],
-      defaultIfNoReply:
-        "Keep the limits per property and flag them as unconfirmed",
-      revisions: [],
-      reviewedRevision: 0,
-      conflictId: "pet-limit",
-    },
-  ],
+});
+
+export const initialState: PrototypeState = {
+  client: null,
+  ...freshOnboarding(),
 };
+
+export function createClient(
+  state: PrototypeState,
+  client: Client,
+): PrototypeState {
+  return { ...state, ...freshOnboarding(), client };
+}
 
 // ---------------------------------------------------------------------------------------------
 // Small helpers
@@ -654,14 +781,25 @@ export const factById = (state: PrototypeState, id: string) =>
   state.facts.find((f) => f.id === id);
 export const shownValue = (f: Fact) => f.customerAnswer?.value ?? f.value;
 export const isConfirmed = (f: Fact) => f.approval === "Customer approved";
-export const allSources = (state: PrototypeState): Source[] => [
-  ...baseSources,
-  ...(state.addedSources.includes(lateSource.id) ? [lateSource] : []),
-];
-const bump = (state: PrototypeState, key: string): PrototypeState => ({
+export const allSources = (state: PrototypeState): Source[] =>
+  state.addedSources
+    .map((id) => sourceCatalog.find((s) => s.id === id)!)
+    .filter(Boolean);
+const bump = (state: PrototypeState, key: string, by = 1): PrototypeState => ({
   ...state,
-  manualLog: { ...state.manualLog, [key]: (state.manualLog[key] ?? 0) + 1 },
+  manualLog: { ...state.manualLog, [key]: (state.manualLog[key] ?? 0) + by },
 });
+
+/** The customer contact who decides a topic. Falls back to the first contact. */
+export function contactFor(
+  state: PrototypeState,
+  topic: Topic,
+): Contact | undefined {
+  const cs = state.client?.contacts ?? [];
+  return cs.find((c) => c.decides.includes(topic)) ?? cs[0];
+}
+export const contactByName = (state: PrototypeState, name: string) =>
+  state.client?.contacts.find((c) => c.name === name);
 
 export type Coverage = "known" | "clarifying" | "empty" | "waived";
 export function coverageOf(f: Fact): Coverage {
@@ -704,49 +842,97 @@ export const usable = (f: Fact) =>
   f.approval !== "Not reviewed";
 
 // ---------------------------------------------------------------------------------------------
-// Sources arriving late
+// Documents: request, upload (simulated extraction), review
 // ---------------------------------------------------------------------------------------------
 
-export function addSource(state: PrototypeState): PrototypeState {
-  if (state.addedSources.includes(lateSource.id)) return state;
-  const fill = (
-    f: Fact,
-    value: string,
-    anchor: string,
-    evidence: string,
-  ): Fact => ({
-    ...f,
-    value,
-    sourceId: lateSource.id,
-    anchor,
-    evidence,
-    lifecycle: "Extracted",
-    approval: "Not reviewed",
-    note: undefined,
-    rev: f.rev + 1,
-  });
+export const documentRequests: {
+  sourceId: string;
+  label: string;
+  area: Area;
+}[] = [
+  { sourceId: "transcript", label: "Kickoff call recording", area: "Goals" },
+  { sourceId: "sop", label: "Operations handbook", area: "Team & rules" },
+  {
+    sourceId: "roster",
+    label: "Escalation contacts spreadsheet",
+    area: "Team & rules",
+  },
+  { sourceId: "faq", label: "Resident FAQ or website link", area: "FAQs" },
+  { sourceId: "scan", label: "Move-in checklist", area: "FAQs" },
+];
+
+export function sendDocumentRequest(state: PrototypeState): PrototypeState {
+  return state.client ? { ...state, docsRequested: true } : state;
+}
+export function requestReadableCopy(state: PrototypeState): PrototypeState {
+  return state.addedSources.includes("scan")
+    ? { ...state, copyRequested: true }
+    : state;
+}
+
+/** Simulated upload: the document is logged and its extraction fills empty facts with citations. */
+export function uploadSource(
+  state: PrototypeState,
+  id: string,
+): PrototypeState {
+  const src = sourceCatalog.find((s) => s.id === id);
+  if (!src || state.addedSources.includes(id)) return state;
+  const fills = new Map(src.fills.map((x) => [x.factId, x]));
   return {
     ...state,
-    addedSources: [...state.addedSources, lateSource.id],
+    addedSources: [...state.addedSources, id],
     sourceRevision: state.sourceRevision + 1,
-    facts: state.facts.map((f) =>
-      f.id === "G2"
-        ? fill(
-            f,
-            "Answer 90% of calls during staffed hours.",
-            "Email · first line",
-            "Our target is 90% of calls answered during staffed hours.",
-          )
-        : f.id === "S3"
-          ? fill(
-              f,
-              "Transfer to the on-call maintenance supervisor.",
-              "Email · second line",
-              "Residents locked out of their unit should go to the on-call maintenance supervisor.",
-            )
-          : f,
-    ),
+    facts: state.facts.map((f) => {
+      const x = fills.get(f.id);
+      if (!x || f.value !== null) return f;
+      return {
+        ...f,
+        value: x.value,
+        sourceId: id,
+        anchor: x.anchor,
+        evidence: x.evidence,
+        lifecycle: "Extracted" as const,
+        approval: "Not reviewed" as const,
+        note: undefined,
+        rev: f.rev + 1,
+      };
+    }),
   };
+}
+/** Kept for the demo tray: the late email is just another upload. */
+export const addSource = (state: PrototypeState) =>
+  uploadSource(state, LATE_ID);
+
+export const needsReview = (s: Source) => s.fills.length > 0;
+/** The specialist checked the extraction against the document. */
+export function reviewSource(
+  state: PrototypeState,
+  id: string,
+): PrototypeState {
+  const src = sourceCatalog.find((s) => s.id === id);
+  if (
+    !src ||
+    !state.addedSources.includes(id) ||
+    state.reviewedSources.includes(id)
+  )
+    return state;
+  let touched = 0;
+  const facts = state.facts.map((f) => {
+    if (
+      f.sourceId === id &&
+      f.approval === "Not reviewed" &&
+      f.lifecycle === "Extracted"
+    ) {
+      touched++;
+      return { ...f, approval: "Specialist reviewed" as const };
+    }
+    return f;
+  });
+  return bump(
+    { ...state, facts, reviewedSources: [...state.reviewedSources, id] },
+    "review-fact",
+    touched,
+  );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -760,7 +946,7 @@ export function detectConflicts(state: PrototypeState): {
   conflicts: Conflict[];
   variations: Variation[];
 } {
-  const present = new Set(allSources(state).map((s) => s.id));
+  const present = new Set(state.addedSources);
   const active = claims.filter((c) => present.has(c.sourceId));
   const conflicts: Conflict[] = [];
   const variations: Variation[] = [];
@@ -807,7 +993,7 @@ export function consistencyReport(state: PrototypeState) {
     const resolution = r && r.claimSig === c.claimIds.join("|") ? r : undefined;
     return { ...c, resolution, resolved: Boolean(resolution) };
   });
-  const present = new Set(allSources(state).map((s) => s.id));
+  const present = new Set(state.addedSources);
   const active = claims.filter((c) => present.has(c.sourceId));
   return {
     ran: state.consistencyRun !== null,
@@ -822,8 +1008,114 @@ export function consistencyReport(state: PrototypeState) {
   };
 }
 
+// Questions the check drafts. The recipient is the customer contact who decides the topic.
+type QuestionSeed = Omit<
+  Question,
+  "status" | "revisions" | "reviewedRevision" | "recipient"
+>;
+const questionCatalog: QuestionSeed[] = [
+  {
+    id: "q-emergency",
+    title: "Weekend flooding route",
+    topic: "routing",
+    conflictId: "weekend-flood-route",
+    factIds: ["T2", "S1"],
+    text: "For a flooding emergency at Maple Grove on a weekend, who should the agent route the caller to first?",
+    why: "The handbook and the kickoff call give different weekend directions for the same property.",
+    source: "Handbook p. 12 + kickoff call 18:42",
+    options: [
+      "Route to the on-call maintenance supervisor first",
+      "Route to the front desk first, then the supervisor",
+      "Something else (explain below)",
+    ],
+  },
+  {
+    id: "q-integration",
+    title: "Property-system access",
+    topic: "integrations",
+    factIds: ["I2", "I3", "I4"],
+    text: "Who can authorize read-only lookups in the property system, and what should the agent do when a lookup is unavailable?",
+    why: "The authorization owner is unknown and the allowed operations are only our proposal.",
+    source: "Kickoff call 32:10 + our template",
+    options: [
+      "The operations lead authorizes read-only lookups",
+      "Someone else authorizes (name them below)",
+      "No lookups for now",
+    ],
+  },
+  {
+    id: "q-pets",
+    title: "Pet limits by property",
+    topic: "policies",
+    conflictId: "pet-limit",
+    factIds: ["F2", "F3"],
+    text: "What is the correct pet limit at each property, including any exceptions?",
+    why: "The handbook sets limits per property; a later email says both allow two cats.",
+    source: "Handbook p. 7 + email",
+    options: [
+      "Per property: two cats at Maple Grove, one cat at Willow Court",
+      "Two cats at both properties",
+      "Something else (explain below)",
+    ],
+    defaultIfNoReply:
+      "Keep the limits per property and flag them as unconfirmed",
+  },
+];
+
+/** Draft a question for every open customer conflict and every unresolved critical integration fact. */
+export function ensureQuestions(state: PrototypeState): PrototypeState {
+  if (!state.client) return state;
+  const open = new Set(
+    consistencyReport(state)
+      .open.filter((c) => c.needs === "customer")
+      .map((c) => c.id),
+  );
+  const integrationOpen = state.facts.some(
+    (f) => ["I2", "I3"].includes(f.id) && !isConfirmed(f),
+  );
+  const added: Question[] = [];
+  for (const seed of questionCatalog) {
+    if (state.questions.some((q) => q.id === seed.id)) continue;
+    const needed = seed.conflictId
+      ? open.has(seed.conflictId)
+      : integrationOpen;
+    if (!needed) continue;
+    added.push({
+      ...seed,
+      recipient: contactFor(state, seed.topic)?.name ?? "",
+      status: "AI draft",
+      revisions: [],
+      reviewedRevision: 0,
+    });
+  }
+  return added.length
+    ? { ...state, questions: [...state.questions, ...added] }
+    : state;
+}
+
+/** Run the check: it flags the facts behind every open customer conflict and drafts the questions. */
 export function runConsistencyCheck(state: PrototypeState): PrototypeState {
-  return { ...state, consistencyRun: state.sourceRevision };
+  let s: PrototypeState = { ...state, consistencyRun: state.sourceRevision };
+  const open = consistencyReport(s).open.filter((c) => c.needs === "customer");
+  const why = new Map<string, string>();
+  for (const c of open) for (const id of c.factIds) why.set(id, c.topicLabel);
+  s = {
+    ...s,
+    facts: s.facts.map((f) =>
+      why.has(f.id) &&
+      f.lifecycle !== "Needs clarification" &&
+      f.lifecycle !== "Not received"
+        ? {
+            ...f,
+            lifecycle: "Needs clarification" as const,
+            approval: "Not reviewed" as const,
+            note: `Sources disagree: ${why.get(f.id)}.`,
+            rev: f.rev + 1,
+          }
+        : f,
+    ),
+  };
+  return ensureQuestions(s);
 }
 
 /** Fix a contradiction inside our own draft by choosing the intended instruction. */
@@ -876,42 +1168,39 @@ export function updateQuestion(
     ),
   };
 }
-
 export const questionCritical = (state: PrototypeState, q: Question) =>
   q.factIds.some((id) => factById(state, id)?.critical);
 
 export function sendRequest(
   state: PrototypeState,
-  role: string,
+  recipient: string,
   questionIds: string[],
 ): PrototypeState {
   const ids = questionIds.filter((id) => {
     const q = state.questions.find((item) => item.id === id);
-    return q && q.recipientRole === role && q.status === "Ready to send";
+    return q && q.recipient === recipient && q.status === "Ready to send";
   });
   if (!ids.length) return state;
   return {
     ...state,
     requests: [
       ...state.requests,
-      {
-        id: `req-${state.requests.length + 1}`,
-        recipientRole: role,
-        recipientName: recipients[role]?.name ?? role,
-        questionIds: ids,
-      },
+      { id: `req-${state.requests.length + 1}`, recipient, questionIds: ids },
     ],
     questions: state.questions.map((q) =>
       ids.includes(q.id) ? { ...q, status: "Sent" as const } : q,
     ),
   };
 }
-
-export function sentQuestionIds(state: PrototypeState, role?: string) {
+export function sentQuestionIds(state: PrototypeState, recipient?: string) {
   return state.requests
-    .filter((r) => !role || r.recipientRole === role)
+    .filter((r) => !recipient || r.recipient === recipient)
     .flatMap((r) => r.questionIds);
 }
+/** Contacts with at least one question assigned. */
+export const recipientsInUse = (state: PrototypeState) => [
+  ...new Set(state.questions.map((q) => q.recipient)),
+];
 
 /** A resolved question whose conflict has come back (new evidence) can be asked again. */
 export function reopenQuestion(
@@ -973,7 +1262,10 @@ export function submitAnswer(
       question.factIds.includes(f.id)
         ? {
             ...f,
-            lifecycle: "Needs clarification" as const,
+            lifecycle:
+              f.lifecycle === "Not received"
+                ? f.lifecycle
+                : ("Needs clarification" as const),
             approval: "Not reviewed" as const,
             note: undefined,
             rev: f.rev + 1,
@@ -1067,6 +1359,10 @@ export function applyDefault(
       q.factIds.includes(f.id)
         ? {
             ...f,
+            lifecycle:
+              f.lifecycle === "Needs clarification"
+                ? ("Extracted" as const)
+                : f.lifecycle,
             approval:
               f.approval === "Not reviewed"
                 ? ("Specialist reviewed" as const)
@@ -1102,7 +1398,6 @@ export function reviewFact(state: PrototypeState, id: string): PrototypeState {
     "review-fact",
   );
 }
-
 export function markConfigured(
   state: PrototypeState,
   id: string,
@@ -1125,7 +1420,6 @@ export function markConfigured(
     "configure",
   );
 }
-
 export function waiveFact(
   state: PrototypeState,
   id: string,
@@ -1142,6 +1436,13 @@ export function waiveFact(
         : x,
     ),
   };
+}
+export function togglePrereq(
+  state: PrototypeState,
+  id: string,
+): PrototypeState {
+  if (!prereqItems.some((p) => p.id === id)) return state;
+  return { ...state, prereqs: { ...state.prereqs, [id]: !state.prereqs[id] } };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1244,7 +1545,6 @@ export function testCases(state: PrototypeState): TestCase[] {
 }
 
 export type TestStatus = "Not run" | "Pass" | "Fail" | "Needs retest";
-
 export function testStatus(state: PrototypeState, tc: TestCase): TestStatus {
   const record = state.tests[tc.id];
   if (!record) return "Not run";
@@ -1252,7 +1552,6 @@ export function testStatus(state: PrototypeState, tc: TestCase): TestStatus {
   if (!f || record.factRev !== f.rev) return "Needs retest";
   return record.result;
 }
-
 export function recordTest(
   state: PrototypeState,
   id: string,
@@ -1273,6 +1572,9 @@ export function recordTest(
     "record-test",
   );
 }
+
+export const prereqsDone = (state: PrototypeState) =>
+  prereqItems.every((p) => state.prereqs[p.id]);
 
 export function launchChecklist(state: PrototypeState) {
   const status = readiness(state);
@@ -1298,6 +1600,7 @@ export function launchChecklist(state: PrototypeState) {
     detail,
   });
   const count = (s: TestStatus) => statuses.filter((x) => x.s === s).length;
+  const prereqLeft = prereqItems.filter((p) => !state.prereqs[p.id]).length;
   return [
     item(
       "preparation",
@@ -1326,6 +1629,12 @@ export function launchChecklist(state: PrototypeState) {
       "Customer questions closed",
       openQuestions.length === 0,
       openQuestions.length ? `${openQuestions.length} open.` : "All closed.",
+    ),
+    item(
+      "prereqs",
+      "Launch prerequisites complete",
+      prereqLeft === 0,
+      prereqLeft ? `${prereqLeft} remaining.` : "All done.",
     ),
     item(
       "critical-tests",
@@ -1371,39 +1680,54 @@ const SENT: QuestionStatus[] = [
   "Defaulted",
 ];
 
+export const topicsCovered = (c: Client) =>
+  topics.every((t) => c.contacts.some((p) => p.decides.includes(t.id)));
+
 export function onboardingSteps(state: PrototypeState): Step[] {
   const report = consistencyReport(state);
   const prep = readiness(state);
   const cases = testCases(state);
   const statuses = cases.map((t) => testStatus(state, t));
-  const f = (id: string) => factById(state, id)!;
+  const sources = allSources(state);
   const gapHandled = (x: Fact) =>
     coverageOf(x) !== "empty" ||
     state.questions.some(
       (q) => q.factIds.includes(x.id) && SENT.includes(q.status),
-    );
-  const usableFacts = state.facts.filter(configurable);
+    ) ||
+    (x.id === "F4" && state.copyRequested);
+  const configurableFacts = state.facts.filter(configurable);
+  const lateReviewed = sources
+    .filter((s) => s.later && needsReview(s))
+    .every((s) => state.reviewedSources.includes(s.id));
   const defs: { name: string; pieces: Piece[] }[] = [
     {
-      name: "Kickoff and goals",
+      name: "Kickoff and client details",
       pieces: [
+        { label: "Client details captured", done: Boolean(state.client) },
         {
-          label: "Primary objective captured",
-          done: coverageOf(f("G1")) === "known",
+          label: "Customer contacts cover every topic",
+          done: state.client ? topicsCovered(state.client) : false,
         },
-        {
-          label: "Properties and channels agreed",
-          done: isConfirmed(f("G4")),
-        },
-        {
-          label: "Information requested from the customer",
-          done: allSources(state).length > 0,
-        },
+        { label: "Document request sent", done: state.docsRequested },
       ],
     },
     {
       name: "Collect information",
       pieces: [
+        {
+          label: "Every requested document uploaded or flagged",
+          done: documentRequests.every((d) =>
+            state.addedSources.includes(d.sourceId),
+          ),
+        },
+        {
+          label: "Extraction reviewed against each document",
+          done:
+            sources
+              .filter((s) => !s.later && needsReview(s))
+              .every((s) => state.reviewedSources.includes(s.id)) &&
+            sources.some(needsReview),
+        },
         {
           label: "Every area has a source-backed fact",
           done: areas.every((a) =>
@@ -1411,16 +1735,6 @@ export function onboardingSteps(state: PrototypeState): Step[] {
               (x) => x.area === a && x.sourceId && x.value !== null,
             ),
           ),
-        },
-        {
-          label: "Every source parsed or flagged",
-          done: allSources(state).every(
-            (s) => s.parse === "Parsed" || s.flagged,
-          ),
-        },
-        {
-          label: "Every fact has an owner",
-          done: state.facts.every((x) => x.owner),
         },
       ],
     },
@@ -1432,7 +1746,7 @@ export function onboardingSteps(state: PrototypeState): Step[] {
           done: state.facts.every(gapHandled),
         },
         {
-          label: "Consistency check is current",
+          label: "Contradiction check is current",
           done: report.ran && !report.stale,
         },
         {
@@ -1443,16 +1757,18 @@ export function onboardingSteps(state: PrototypeState): Step[] {
           label: "Critical facts customer-confirmed",
           done: prep.critical === 0,
         },
+        { label: "Late documents reviewed", done: lateReviewed },
       ],
     },
     {
       name: "Configure and test",
       pieces: [
+        { label: "Launch prerequisites complete", done: prereqsDone(state) },
         {
           label: "Every usable fact configured",
           done:
-            usableFacts.length > 0 &&
-            usableFacts.every((x) => x.lifecycle === "Configured"),
+            configurableFacts.length > 0 &&
+            configurableFacts.every((x) => x.lifecycle === "Configured"),
         },
         {
           label: "Critical scenarios tested and passing",
@@ -1501,14 +1817,13 @@ export function onboardingSteps(state: PrototypeState): Step[] {
       status,
       detail:
         status === "Upcoming"
-          ? `Starts when step ${i} is complete.`
+          ? `Starts when stage ${i} is complete.`
           : status === "Done"
             ? "All pieces complete."
             : `${complete} of ${d.pieces.length} pieces done.`,
     };
   });
 }
-
 export function currentStep(state: PrototypeState) {
   const steps = onboardingSteps(state);
   return steps.find((s) => s.status === "Current") ?? steps[steps.length - 1];
@@ -1516,12 +1831,12 @@ export function currentStep(state: PrototypeState) {
 
 export function needsFromCustomer(
   state: PrototypeState,
-  role?: string,
+  recipient?: string,
 ): string[] {
   return state.questions
     .filter(
       (q) =>
-        (!role || q.recipientRole === role) &&
+        (!recipient || q.recipient === recipient) &&
         sentQuestionIds(state).includes(q.id) &&
         (q.status === "Sent" || q.status === "Response received") &&
         q.revisions.length === q.reviewedRevision,
@@ -1530,7 +1845,94 @@ export function needsFromCustomer(
 }
 
 // ---------------------------------------------------------------------------------------------
-// Next actions
+// Assignments: every open item has a person, on the customer side or on ours
+// ---------------------------------------------------------------------------------------------
+
+export type Assignment = {
+  id: string;
+  title: string;
+  detail: string;
+  side: "customer" | "team";
+  assignee: string;
+  role: string;
+  due: string;
+  stage: 1 | 2 | 3 | 4 | 5;
+};
+
+export function assignments(state: PrototypeState): Assignment[] {
+  const out: Assignment[] = [];
+  if (!state.client) return out;
+  const roleOf = (name: string) => contactByName(state, name)?.role ?? "";
+  if (state.docsRequested)
+    for (const d of documentRequests) {
+      const src = sourceCatalog.find((s) => s.id === d.sourceId)!;
+      if (src.origin === "team") continue;
+      // Anything already uploaded is not waiting on the customer. An unreadable scan is our action
+      // first (request a copy); it becomes the customer's only once we have asked.
+      if (state.addedSources.includes(d.sourceId)) continue;
+      const who = contactFor(state, src.topic)?.name ?? "";
+      out.push({
+        id: `doc-${d.sourceId}`,
+        title: `Send: ${d.label}`,
+        detail: `Requested for ${d.area}`,
+        side: "customer",
+        assignee: who,
+        role: roleOf(who),
+        due: "Due Oct 25",
+        stage: 2,
+      });
+    }
+  if (
+    state.copyRequested &&
+    !factById(state, "F4")?.waived &&
+    state.addedSources.includes("scan")
+  ) {
+    const who = contactFor(state, "documents")?.name ?? "";
+    out.push({
+      id: "doc-scan-copy",
+      title: "Send a readable copy: Move-in checklist",
+      detail: "Requested again as a text file",
+      side: "customer",
+      assignee: who,
+      role: roleOf(who),
+      due: "Due Nov 2",
+      stage: 2,
+    });
+  }
+  for (const q of state.questions) {
+    if (
+      (q.status === "Sent" || q.status === "Response received") &&
+      q.revisions.length === q.reviewedRevision
+    )
+      out.push({
+        id: `q-${q.id}`,
+        title: `Answer: ${q.title}`,
+        detail: questionCritical(state, q)
+          ? "Blocks launch"
+          : "Non-critical, can default",
+        side: "customer",
+        assignee: q.recipient,
+        role: roleOf(q.recipient),
+        due: "Reply within 3 business days",
+        stage: 3,
+      });
+  }
+  for (const a of nextActions(state))
+    out.push({
+      id: `team-${a.id}`,
+      title: a.title,
+      detail: a.subtitle,
+      side: "team",
+      assignee: state.client.owner,
+      role: "Onboarding specialist",
+      due: a.due,
+      stage: a.target.stage ?? 3,
+    });
+  return out;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Next actions (the team's queue)
 // ---------------------------------------------------------------------------------------------
 
 export type NextAction = {
@@ -1543,30 +1945,72 @@ export type NextAction = {
   due: string;
   button: string;
   target: {
-    view: "requirements" | "checks" | "qa" | "process";
+    stage?: 1 | 2 | 3 | 4 | 5;
+    view?: "spec" | "process";
     factId?: string;
   };
 };
 
 export function nextActions(state: PrototypeState): NextAction[] {
   const actions: NextAction[] = [];
+  if (!state.client) return actions;
   const report = consistencyReport(state);
   const a = (x: Omit<NextAction, "owner">) =>
-    actions.push({ ...x, owner: OWNER });
-  if (!report.ran || report.stale)
+    actions.push({ ...x, owner: state.client!.owner });
+  const sources = allSources(state);
+  if (!state.docsRequested)
+    a({
+      id: "request-docs",
+      tone: "orange",
+      icon: "✉",
+      title: "Send the document request to the customer",
+      subtitle: "Each document goes to the contact who owns it",
+      due: "Today",
+      button: "Open stage 1",
+      target: { stage: 1 },
+    });
+  const missing = documentRequests.filter(
+    (d) => !state.addedSources.includes(d.sourceId),
+  );
+  if (state.docsRequested && missing.length)
+    a({
+      id: "upload",
+      tone: "orange",
+      icon: "⬆",
+      title: `Upload the ${missing.length} document${missing.length === 1 ? "" : "s"} received so far`,
+      subtitle: "Each upload is read into the spec with citations",
+      due: "As they arrive",
+      button: "Open stage 2",
+      target: { stage: 2 },
+    });
+  const unreviewed = sources.filter(
+    (s) => needsReview(s) && !state.reviewedSources.includes(s.id),
+  );
+  if (unreviewed.length)
+    a({
+      id: "review-sources",
+      tone: "blue",
+      icon: "◇",
+      title: `Check the extraction for ${unreviewed.length} document${unreviewed.length === 1 ? "" : "s"}`,
+      subtitle: "Confirm what was read matches the document",
+      due: "Before the contradiction check",
+      button: "Review",
+      target: { stage: unreviewed.every((s) => s.later) ? 3 : 2 },
+    });
+  if (state.addedSources.length && (!report.ran || report.stale))
     a({
       id: "run-check",
       tone: "orange",
       icon: "◈",
       title: report.stale
-        ? "Run the consistency check again"
-        : "Run the consistency check",
+        ? "Run the contradiction check again"
+        : "Run the contradiction check",
       subtitle: report.stale
         ? "A new source arrived after the last check"
         : "Sources and draft prompts have not been compared",
       due: "Before asking the customer",
-      button: "Open checks",
-      target: { view: "checks" },
+      button: "Open check",
+      target: { stage: 3 },
     });
   for (const c of report.open)
     a({
@@ -1583,7 +2027,7 @@ export function nextActions(state: PrototypeState): NextAction[] {
           : "Our own draft contradicts itself",
       due: "Due today",
       button: "Resolve",
-      target: { view: "checks" },
+      target: { stage: 3 },
     });
   for (const q of state.questions.filter(
     (x) => x.revisions.length > x.reviewedRevision,
@@ -1592,11 +2036,11 @@ export function nextActions(state: PrototypeState): NextAction[] {
       id: `review-${q.id}`,
       tone: "orange",
       icon: "↺",
-      title: `Review customer answer: ${q.title}`,
-      subtitle: "A reply is evidence; specialist approval is still required",
+      title: `Review the reply: ${q.title}`,
+      subtitle: `${q.recipient} replied; a specialist must approve it`,
       due: "New reply",
       button: "Review",
-      target: { view: "checks" },
+      target: { stage: 3 },
     });
   const drafts = state.questions.filter((q) => q.status === "AI draft");
   if (drafts.length)
@@ -1607,23 +2051,23 @@ export function nextActions(state: PrototypeState): NextAction[] {
       title: `Approve wording for ${drafts.length} drafted question${drafts.length === 1 ? "" : "s"}`,
       subtitle: "AI-drafted; staff must approve before sending",
       due: "Before sending",
-      button: "Open batch",
-      target: { view: "checks" },
+      button: "Open",
+      target: { stage: 3 },
     });
-  for (const role of Object.keys(recipients)) {
+  for (const name of recipientsInUse(state)) {
     const ready = state.questions.filter(
-      (q) => q.recipientRole === role && q.status === "Ready to send",
+      (q) => q.recipient === name && q.status === "Ready to send",
     );
     if (ready.length)
       a({
-        id: `send-${role}`,
+        id: `send-${name}`,
         tone: "blue",
         icon: "↗",
-        title: `Send ${ready.length} approved question${ready.length === 1 ? "" : "s"} to ${recipients[role].name}`,
-        subtitle: role,
+        title: `Send ${ready.length} approved question${ready.length === 1 ? "" : "s"} to ${name}`,
+        subtitle: contactByName(state, name)?.role ?? "",
         due: "Ready",
         button: "Send",
-        target: { view: "checks" },
+        target: { stage: 3 },
       });
   }
   const gaps = state.facts.filter(
@@ -1631,36 +2075,20 @@ export function nextActions(state: PrototypeState): NextAction[] {
       coverageOf(f) === "empty" &&
       !state.questions.some(
         (q) => q.factIds.includes(f.id) && SENT.includes(q.status),
-      ),
+      ) &&
+      !(f.id === "F4" && state.copyRequested) &&
+      state.addedSources.length > 0,
   );
   for (const g of gaps)
     a({
       id: `gap-${g.id}`,
       tone: "green",
       icon: "▤",
-      title: `Fill the gap: ${g.label}`,
+      title: `Close the gap: ${g.label}`,
       subtitle: g.note ?? "Required fact has no value",
       due: "Nov 2",
-      button: "Open fact",
-      target: { view: "requirements", factId: g.id },
-    });
-  const unreviewed = state.facts.filter(
-    (f) =>
-      f.value !== null &&
-      f.approval === "Not reviewed" &&
-      f.lifecycle !== "Needs clarification" &&
-      !f.waived,
-  );
-  if (unreviewed.length)
-    a({
-      id: "review-facts",
-      tone: "blue",
-      icon: "◇",
-      title: `Review ${unreviewed.length} extracted fact${unreviewed.length === 1 ? "" : "s"}`,
-      subtitle: "Source-backed drafts, not yet reviewed",
-      due: "Oct 31",
-      button: "Review",
-      target: { view: "requirements", factId: unreviewed[0].id },
+      button: "Open",
+      target: { stage: 3 },
     });
   if (readiness(state).ready) {
     const toConfigure = state.facts.filter(
@@ -1669,6 +2097,17 @@ export function nextActions(state: PrototypeState): NextAction[] {
         f.lifecycle !== "Configured" &&
         (!f.critical || isConfirmed(f)),
     );
+    if (!prereqsDone(state))
+      a({
+        id: "prereqs",
+        tone: "orange",
+        icon: "☑",
+        title: `Complete ${prereqItems.filter((p) => !state.prereqs[p.id]).length} launch prerequisites`,
+        subtitle: "Phone number, SMS registration, integration, Slack logs",
+        due: "Before launch",
+        button: "Open stage 4",
+        target: { stage: 4 },
+      });
     if (toConfigure.length)
       a({
         id: "configure",
@@ -1678,7 +2117,7 @@ export function nextActions(state: PrototypeState): NextAction[] {
         subtitle: "Build the agent from confirmed facts only",
         due: "Before testing",
         button: "Open stage 4",
-        target: { view: "qa" },
+        target: { stage: 4 },
       });
     const waiting = testCases(state).filter((t) =>
       ["Not run", "Needs retest", "Fail"].includes(testStatus(state, t)),
@@ -1692,16 +2131,76 @@ export function nextActions(state: PrototypeState): NextAction[] {
         subtitle:
           "Try each scenario against the configured agent, then record the outcome",
         due: "Before launch",
-        button: "Open QA",
-        target: { view: "qa" },
+        button: "Open stage 4",
+        target: { stage: 4 },
       });
   }
   return actions;
 }
 
 // ---------------------------------------------------------------------------------------------
-// Check-in text, process log, issues
+// Team roles and rules (customer side): who handles what, when, with which fallback
 // ---------------------------------------------------------------------------------------------
+
+export type RoutingRow = {
+  scenario: string;
+  who: string;
+  when: string;
+  fallback: string;
+  source: string;
+  status: "Known" | "Disputed" | "Not received";
+};
+
+/** The customer's roles and routing rules, derived from the facts received so far. */
+export function routingTable(state: PrototypeState): RoutingRow[] {
+  const f = (id: string) => factById(state, id)!;
+  const known = (id: string) =>
+    f(id).value !== null && coverageOf(f(id)) !== "empty";
+  const disputed = coverageOf(f("T2")) === "clarifying";
+  return [
+    {
+      scenario: "Office-hours calls",
+      who: known("T1") ? "Leasing desk" : "—",
+      when: known("F1") ? "Mon–Fri, 9 a.m.–5 p.m." : "—",
+      fallback: known("F1") ? "Take a message; return next business day" : "—",
+      source: known("F1") ? f("F1").anchor : "Not received",
+      status: known("F1") ? "Known" : "Not received",
+    },
+    {
+      scenario: "After-hours emergency (weekend)",
+      who: known("T2")
+        ? disputed
+          ? "On-call supervisor OR front desk (sources disagree)"
+          : (shownValue(f("T2")) ?? "")
+        : "—",
+      when: known("T4")
+        ? "Weekend schedule kept in the customer's scheduling system"
+        : "—",
+      fallback: known("T3")
+        ? "Property manager, then take a callback number"
+        : "—",
+      source: known("T2") ? f("T2").anchor : "Not received",
+      status: !known("T2") ? "Not received" : disputed ? "Disputed" : "Known",
+    },
+    {
+      scenario: "Locked out of unit",
+      who: known("S3") ? "On-call maintenance supervisor" : "—",
+      when: "After hours",
+      fallback: known("S3") ? "Property manager" : "—",
+      source: known("S3") ? f("S3").anchor : "Not received",
+      status: known("S3") ? "Known" : "Not received",
+    },
+    {
+      scenario: "Unsupported question",
+      who: "Agent",
+      when: "Any time",
+      fallback:
+        "Take a callback number; team returns the call next business day",
+      source: f("S4").anchor,
+      status: "Known",
+    },
+  ];
+}
 
 export function weeklyCheckIn(state: PrototypeState): string {
   const step = currentStep(state);
@@ -1720,9 +2219,9 @@ export function weeklyCheckIn(state: PrototypeState): string {
       .map((t) => `Failing test ${t.id}`),
   ];
   return [
-    "# Weekly check-in · Oakwood Property Group (fictional)",
+    `# Weekly check-in · ${state.client?.name ?? "Client"} (fictional)`,
     "",
-    `Progress: step ${step.n} of 5, ${step.name}. ${step.detail}`,
+    `Progress: stage ${step.n} of 5, ${step.name}. ${step.detail}`,
     `Coverage: ${cov.known} of ${cov.total} required facts known, ${cov.confirmed} confirmed by you, ${cov.clarifying} awaiting clarification, ${cov.empty} not received.`,
     "",
     "## Needed from you",
@@ -1737,8 +2236,8 @@ export function weeklyCheckIn(state: PrototypeState): string {
     ...(risks.length ? risks.map((r) => `- ${r}`) : ["- None open."]),
     "",
     report.ran
-      ? `Consistency check: ${report.conflicts.length} conflicts found, ${report.conflicts.filter((c) => c.resolved).length} resolved.`
-      : "Consistency check not yet run.",
+      ? `Contradiction check: ${report.conflicts.length} conflicts found, ${report.conflicts.filter((c) => c.resolved).length} resolved.`
+      : "Contradiction check not yet run.",
     "",
   ].join("\n");
 }
@@ -1748,7 +2247,7 @@ export function slackUpdate(state: PrototypeState): string {
   const cov = coverage(state);
   const needed = needsFromCustomer(state);
   return [
-    `*Oakwood Property Group* — step ${step.n}/5 (${step.name})`,
+    `*${state.client?.name ?? "Client"}* — stage ${step.n}/5 (${step.name})`,
     `Coverage: ${cov.known}/${cov.total} known · ${cov.confirmed} confirmed · ${cov.empty} not received`,
     needed.length
       ? `Waiting on customer: ${needed.join("; ")}`
@@ -1757,13 +2256,17 @@ export function slackUpdate(state: PrototypeState): string {
   ].join("\n");
 }
 
+// ---------------------------------------------------------------------------------------------
+// Process log, issues
+// ---------------------------------------------------------------------------------------------
+
 export const AUTOMATION_THRESHOLD = 3;
 export const processLog = [
   {
     id: "compare",
     label: "Compare sources for contradictions",
     baseline: 6,
-    automatedBy: "Consistency check",
+    automatedBy: "Contradiction check",
     live: null,
   },
   {
@@ -1828,15 +2331,13 @@ export function processCounts(state: PrototypeState) {
     };
   });
 }
-
 export const stageDays = [
-  { name: "Kickoff and goals", days: "2 days" },
+  { name: "Kickoff and client details", days: "2 days" },
   { name: "Collect information", days: "4 days" },
   { name: "Clarify and confirm", days: "in progress" },
   { name: "Configure and test", days: "not started" },
   { name: "Go live and tune", days: "not started" },
 ];
-
 export const seedIssues: Issue[] = [
   {
     id: "i1",
@@ -1887,7 +2388,6 @@ const cell = (v: unknown) => {
   const s = String(v ?? "");
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 };
-
 export function exportRows(state: PrototypeState) {
   const cases = testCases(state);
   return state.facts.map((f) => {
@@ -1896,6 +2396,7 @@ export function exportRows(state: PrototypeState) {
       fact_id: f.id,
       area: f.area,
       fact: f.label,
+      lands_in: f.lands,
       value: shownValue(f) ?? "",
       status: shownLifecycle(state, f),
       approval: f.approval,
@@ -1912,7 +2413,6 @@ export function exportRows(state: PrototypeState) {
     };
   });
 }
-
 export function exportCsv(state: PrototypeState): string {
   const rows = exportRows(state);
   const head = Object.keys(rows[0]);
@@ -1925,14 +2425,15 @@ export function exportCsv(state: PrototypeState): string {
     ].join("\n") + "\n"
   );
 }
-
 export function exportJson(state: PrototypeState): string {
   return (
     JSON.stringify(
       {
-        customer: "Fictional Oakwood Property Group",
+        customer: state.client
+          ? `Fictional ${state.client.name}`
+          : "Fictional client",
         simulated: true,
-        step: currentStep(state).n,
+        stage: currentStep(state).n,
         coverage: coverage(state),
         facts: exportRows(state),
         process: processCounts(state).map((p) => ({

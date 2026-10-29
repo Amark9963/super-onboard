@@ -8,7 +8,14 @@ import {
 } from "./state";
 
 export type View =
-  "clients" | "new" | "journey" | "spec" | "process" | "portal";
+  | "login"
+  | "dashboard"
+  | "new"
+  | "journey"
+  | "spec"
+  | "assignments"
+  | "process"
+  | "portal";
 
 /** What every screen needs from the shell. */
 export type Ctx = {
@@ -16,31 +23,38 @@ export type Ctx = {
   update: (fn: (s: PrototypeState) => PrototypeState) => void;
   flash: (message: string) => void;
   go: (view: View) => void;
-  setPortalRole: (role: string) => void;
+  setPortalRole: (name: string) => void;
   setFocusFact: (id: string) => void;
 };
 
+const GREEN = [
+  "Customer confirmed",
+  "Customer approved",
+  "Configured",
+  "Tested",
+  "Pass",
+  "Resolved",
+  "Received",
+  "Known",
+];
+const AMBER = [
+  "Needs clarification",
+  "Needs retest",
+  "Defaulted",
+  "Needs a readable copy",
+  "Disputed",
+];
+const RED = ["Not received", "Fail", "Missing"];
+const GRAY = ["Not reviewed", "Not run", "Waived"];
+
 export const tone = (s: string) =>
-  [
-    "Customer confirmed",
-    "Customer approved",
-    "Configured",
-    "Tested",
-    "Pass",
-    "Resolved",
-    "Received",
-  ].includes(s)
+  GREEN.includes(s)
     ? "green"
-    : [
-          "Needs clarification",
-          "Needs retest",
-          "Defaulted",
-          "Needs a readable copy",
-        ].includes(s)
+    : AMBER.includes(s)
       ? "amber"
-      : ["Not received", "Fail", "Missing"].includes(s)
+      : RED.includes(s)
         ? "red"
-        : ["Not reviewed", "Not run", "Waived"].includes(s)
+        : GRAY.includes(s)
           ? "gray"
           : "blue";
 
@@ -63,6 +77,35 @@ export function Tag({
   return (
     <span className={`v2-tag ${kind ?? tone(String(children))}`}>
       {children}
+    </span>
+  );
+}
+
+/** A person with the side they are on, so it is always clear who an item is assigned to. */
+export function Person({
+  name,
+  role,
+  side,
+}: {
+  name: string;
+  role?: string;
+  side: "customer" | "team";
+}) {
+  const initials = name
+    .split(" ")
+    .map((p) => p[0])
+    .join("")
+    .slice(0, 2);
+  return (
+    <span className={`v2-person ${side}`}>
+      <i>{initials}</i>
+      <span>
+        <strong>{name}</strong>
+        <small>
+          {side === "customer" ? "Customer" : "Our team"}
+          {role ? ` · ${role}` : ""}
+        </small>
+      </span>
     </span>
   );
 }
