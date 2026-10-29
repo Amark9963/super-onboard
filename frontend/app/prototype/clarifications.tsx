@@ -14,6 +14,7 @@ import {
   waiveFact,
   type Question,
 } from "./state";
+import { Notes } from "./notes";
 import { Avatar, Empty, Person, Tag, type Ctx } from "./ui";
 
 const SENT = ["Sent", "Response received", "Resolved", "Defaulted"];
@@ -120,7 +121,7 @@ export function ClarificationsTab({ ctx }: { ctx: Ctx }) {
       </aside>
       <section className="v3-detail">
         {q && <QuestionDetail ctx={ctx} q={q} />}
-        {gap && <GapDetail ctx={ctx} fid={gap.id} />}
+        {gap && <GapDetail key={gap.id} ctx={ctx} fid={gap.id} />}
         {!q && !gap && <Empty title="Select an item" />}
       </section>
     </div>
@@ -259,6 +260,7 @@ function QuestionDetail({ ctx, q }: { ctx: Ctx; q: Question }) {
           </button>
         )}
       </div>
+      <Notes ctx={ctx} target={{ kind: "question", id: q.id }} />
     </>
   );
 }
@@ -312,6 +314,7 @@ function GapDetail({ ctx, fid }: { ctx: Ctx; fid: string }) {
           Waive with reason
         </button>
       </div>
+      <Notes ctx={ctx} target={{ kind: "fact", id: fid }} />
     </>
   );
 }

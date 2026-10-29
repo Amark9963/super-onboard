@@ -31,6 +31,9 @@ One client onboarding from kickoff to go-live, in the structure of a delivery to
   plus the customer team's roles and routing rules.
 - **Activity:** who did what, on which side (customer, our team, automatic).
 - **Customer portal:** a separate view with only the customer's tasks, uploads and questions.
+- **Team collaboration:** internal notes with @mentions on any detail, question or conflict (the
+  customer never sees them), a second-person review before setup, a generated handover note, and
+  an Inbox that can show just the work for the person you are viewing as.
 - **Team:** our own members, roles and a simulated invite flow. The onboarding owner is chosen from
   the team.
 
@@ -51,10 +54,21 @@ that ticks off by itself. The same path:
    who decides routing and integrations.
 7. **Preview as customer** (or the guide's “Answer as the customer”): answer as Maya Chen.
 8. **Approve the replies** and close the open gaps (waive them with a reason).
-9. **Plan:** setup and go-live tasks unlock once clarification is done. Tick them off.
+9. **Get a teammate’s review.** Requirements tab: ask Riley Kim to review. In the sidebar choose
+   “Viewing as” Riley Kim, open the Inbox, and approve. (A reviewer can also ask for changes with a
+   reason. Changing details or ownership during a pending review requires a fresh request; changing
+   them after approval makes the approval stale.)
+10. **Plan:** setup and go-live tasks unlock once clarification is done. Tick them off.
+
+Optional: leave a note on any question or detail and type `@Riley` to mention a teammate. They see
+it under Mine in their Inbox. The “Handover note” button in the client header summarises who is
+waiting on whom, recent decisions, risks and the latest notes for the next owner.
 
 ## What is simulated
 
+- Slack notifications for mentions and review requests are only described on screen; nothing is
+  sent. Switching “Viewing as” is a demo control; it does not enforce permissions everywhere (only
+  requesting and deciding a review are tied to who you are).
 - Sign-in, file upload, document extraction, sending questions, the customer's answers and team
   invitations are all simulated, and labelled as such on screen. Nothing leaves the browser.
 - The setup and go-live tasks (configure, connect, test, launch) are a checklist. Those steps happen

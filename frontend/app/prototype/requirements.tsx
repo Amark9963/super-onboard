@@ -10,21 +10,23 @@ import {
   shownValue,
   waiveFact,
   type Fact,
-  type PrototypeState,
 } from "./state";
+import { Notes } from "./notes";
+import { ReviewCard } from "./review";
 import { Tag, type Ctx } from "./ui";
 
 function FactRow({
-  state,
+  ctx,
   f,
   onReview,
   waive,
 }: {
-  state: PrototypeState;
+  ctx: Ctx;
   f: Fact;
   onReview: () => void;
   waive: (reason: string) => void;
 }) {
+  const { state } = ctx;
   const [reason, setReason] = useState("");
   const life = f.waived ? "Waived" : f.lifecycle;
   const value = shownValue(f);
@@ -75,6 +77,7 @@ function FactRow({
             <p>“{f.evidence}”</p>
           </details>
         )}
+        <Notes ctx={ctx} target={{ kind: "fact", id: f.id }} collapsed />
       </div>
       <div className="state">
         <Tag kind={f.waived ? "gray" : undefined}>{life}</Tag>
@@ -115,6 +118,7 @@ export function RequirementsTab({ ctx }: { ctx: Ctx }) {
   const table = routingTable(state);
   return (
     <>
+      <ReviewCard ctx={ctx} />
       <section className="v3-card">
         <div className="v3-cardhead">
           <div>
@@ -168,7 +172,7 @@ export function RequirementsTab({ ctx }: { ctx: Ctx }) {
             .map((f) => (
               <FactRow
                 key={f.id}
-                state={state}
+                ctx={ctx}
                 f={f}
                 onReview={() => update((s) => reviewFact(s, f.id))}
                 waive={(reason) => update((s) => waiveFact(s, f.id, reason))}

@@ -32,6 +32,8 @@ import { DocumentsTab } from "./documents";
 import { ClarificationsTab } from "./clarifications";
 import { RequirementsTab } from "./requirements";
 import { ContactForm } from "./contacts";
+import { handoverNote } from "./collab";
+import { Notes } from "./notes";
 
 /** Where a next action is worked on. */
 export function tabFor(a: NextAction): Tab {
@@ -40,6 +42,8 @@ export function tabFor(a: NextAction): Tab {
     a.id.startsWith("conflict-")
   )
     return "documents";
+  if (["request-review", "review-details"].includes(a.id))
+    return "requirements";
   if (
     ["approve-wording"].includes(a.id) ||
     a.id.startsWith("send-") ||
@@ -110,6 +114,12 @@ export default function Workspace({
             onClick={() => setDraft(draft ? "" : slackUpdate(state))}
           >
             Slack update
+          </button>
+          <button
+            className="v3-btn secondary"
+            onClick={() => setDraft(draft ? "" : handoverNote(state))}
+          >
+            Handover note
           </button>
           <button className="v3-btn secondary" onClick={() => go("portal")}>
             Preview as customer
@@ -298,7 +308,12 @@ function PlanTab({ ctx }: { ctx: Ctx }) {
               <select
                 aria-label="Onboarding owner"
                 value={client.owner}
-                onChange={(e) => update((s) => setOwner(s, e.target.value))}
+                onChange={(e) => {
+                  update((s) => setOwner(s, e.target.value));
+                  flash(
+                    `${e.target.value} now owns this onboarding. Open “Handover note” in the header to pass on the context.`,
+                  );
+                }}
               >
                 {owners(state).map((m) => (
                   <option key={m.id} value={m.name}>
@@ -318,6 +333,13 @@ function PlanTab({ ctx }: { ctx: Ctx }) {
             <dt>Their systems</dt>
             <dd>{client.systems.join(" · ")}</dd>
           </dl>
+        </section>
+        <section className="v3-card">
+          <Notes
+            ctx={ctx}
+            target={{ kind: "client", id: "onboarding" }}
+            label="Team notes on this onboarding"
+          />
         </section>
         <section className="v3-card">
           <h3>Customer team</h3>

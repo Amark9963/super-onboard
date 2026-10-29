@@ -45,6 +45,18 @@ import {
   currentStep as step,
 } from "../app/prototype/state.ts";
 import { diffActivity } from "../app/prototype/activity.ts";
+import {
+  addNote,
+  canRequestReview,
+  decideReview,
+  handoverNote,
+  markSeen,
+  mentionsIn,
+  myQueue,
+  requestReview,
+  reviewers,
+  setMe,
+} from "../app/prototype/collab.ts";
 import { tryItSteps } from "../app/prototype/demo.ts";
 import { phaseProgress, planTasks } from "../app/prototype/plan.ts";
 
@@ -66,7 +78,7 @@ const answer = (s, id, text) =>
   reviewAnswer(submitAnswer(s, id, text, "answer"), id);
 
 /** An onboarding with intake and clarification finished; setup in the platform is still to do. */
-function clarified() {
+function readyForReview() {
   let s = sendDocumentRequest(started());
   s = upload(s, "transcript", "sop", "roster", "faq", "scan", "prompt-draft");
   for (const id of ["transcript", "sop", "roster", "faq"])
@@ -84,6 +96,19 @@ function clarified() {
   for (const id of ["G2", "S3", "F4"])
     s = waiveFact(s, id, "Not needed for launch");
   return s;
+}
+
+/** Owner asks a QA reviewer, who approves; then back to the owner. */
+function reviewedBy(s, reviewer = "Riley Kim") {
+  const owner = s.me;
+  s = requestReview(s, reviewer);
+  s = setMe(s, s.team.find((m) => m.name === reviewer).id);
+  s = decideReview(s, "approve", "");
+  return setMe(s, owner);
+}
+
+function clarified() {
+  return reviewedBy(readyForReview());
 }
 
 test("the app starts with no client and an empty spec of 20 required facts", () => {
@@ -394,11 +419,15 @@ test("setup and go-live are tasks that unlock in order, and finish the onboardin
 
 test("a new customer answer after clarification reopens the readiness checks", () => {
   let s = clarified();
-  s = answer(s, "q-emergency", "Front desk first");
   assert.equal(
     setupReadiness(s).every((c) => c.pass),
     true,
-    "an approved answer is still clear",
+  );
+  s = answer(s, "q-emergency", "Front desk first");
+  assert.equal(
+    setupReadiness(s).find((c) => c.id === "second-review").pass,
+    false,
+    "the approval no longer matches the details",
   );
   s = reopenQuestion(s, "q-emergency");
   s = approveAndSend(s);
@@ -749,6 +778,7 @@ test("the Try it guide ticks off by itself from what the viewer actually did", (
     "send",
     "answer",
     "approve",
+    "review",
   ]);
   const withInvite = inviteMember(
     done,
@@ -774,4 +804,179 @@ test("every step of the guide finishes when the onboarding is complete", () => {
       .every((x) => x.done),
     true,
   );
+});
+
+// ---------------------------------------------------------------------------------------------
+// Team collaboration
+// ---------------------------------------------------------------------------------------------
+
+test("@mentions match full or first names of active members only", () => {
+  const team = inviteMember(
+    initialState,
+    "pending.person@example.invalid",
+    "QA reviewer",
+  ).team;
+  assert.deepEqual(
+    mentionsIn(team, "@Riley please check, cc @Sam Rivera and @pending"),
+    ["Sam Rivera", "Riley Kim"],
+  );
+  assert.deepEqual(mentionsIn(team, "email riley@example.invalid"), []);
+  assert.deepEqual(mentionsIn(team, "@Rileyx is not a person"), []);
+});
+
+test("notes are internal, attributed to who is signed in, and mentions go to others", () => {
+  const s0 = started();
+  assert.equal(
+    addNote(s0, { kind: "client", id: "c" }, "   "),
+    s0,
+    "empty notes are ignored",
+  );
+  const target = { kind: "fact", id: "S4" };
+  const s1 = addNote(s0, target, "@Avery and @Riley: is this right?");
+  const n = s1.notes[0];
+  assert.equal(n.author, "Avery Morgan");
+  assert.deepEqual(n.mentions, ["Riley Kim"], "you cannot mention yourself");
+  const logged = diffActivity(s0, s1).activity.at(-1);
+  assert.equal(logged.kind, "note");
+  assert.ok(logged.text.endsWith("(mentioned Riley Kim)"));
+  const asRiley = setMe(s1, "t-riley");
+  assert.equal(myQueue(asRiley).filter((i) => i.kind === "mention").length, 1);
+  assert.equal(
+    markSeen(s1, [n.id]),
+    s1,
+    "only the mentioned person can mark it seen",
+  );
+  const seen = markSeen(asRiley, [n.id]);
+  assert.equal(myQueue(seen).filter((i) => i.kind === "mention").length, 0);
+});
+
+test("the review needs the owner to ask and a different team member to decide", () => {
+  const early = started();
+  assert.equal(canRequestReview(early, "Riley Kim").ok, false, "not ready");
+  const ready = readyForReview();
+  assert.deepEqual(
+    reviewers(ready).map((m) => m.name),
+    ["Sam Rivera", "Riley Kim"],
+    "not the owner, not an engineer",
+  );
+  assert.equal(
+    canRequestReview(setMe(ready, "t-riley"), "Sam Rivera").ok,
+    false,
+    "only the owner asks",
+  );
+  assert.equal(canRequestReview(ready, "Avery Morgan").ok, false);
+  assert.equal(canRequestReview(ready, "Jamie Park").ok, false);
+  const asked = requestReview(ready, "Riley Kim");
+  assert.equal(asked.review.status, "Requested");
+  assert.equal(setupUnlocked(asked, 4), false, "setup waits for the review");
+  assert.equal(
+    planTasks(asked).find((t) => t.id === "p3-review").assignee,
+    "Riley Kim",
+  );
+  assert.equal(
+    decideReview(asked, "approve", ""),
+    asked,
+    "the owner cannot approve their own work",
+  );
+  const asRiley = setMe(asked, "t-riley");
+  assert.equal(
+    decideReview(asRiley, "changes", " "),
+    asRiley,
+    "changes need a reason",
+  );
+  const sentBack = decideReview(asRiley, "changes", "F2 contradicts the call");
+  assert.equal(sentBack.review.status, "Changes requested");
+  assert.equal(setupUnlocked(sentBack, 4), false);
+  const again = requestReview(setMe(sentBack, "t-avery"), "Sam Rivera");
+  assert.equal(again.review.round, 2);
+  const approved = decideReview(setMe(again, "t-sam"), "approve", "");
+  assert.equal(setupUnlocked(approved, 4), true);
+  const events = [
+    diffActivity(ready, asked).activity.at(-1),
+    diffActivity(asked, sentBack).activity.at(-1),
+    diffActivity(again, approved).activity.at(-1),
+  ];
+  assert.deepEqual(
+    events.map((e) => [e.actor.name, e.kind]),
+    [
+      ["Avery Morgan", "review-request"],
+      ["Riley Kim", "review-decision"],
+      ["Sam Rivera", "review-decision"],
+    ],
+  );
+});
+
+test("a change after the review makes the approval stale and locks setup again", () => {
+  const s = clarified();
+  assert.equal(setupUnlocked(s, 4), true);
+  const changed = {
+    ...s,
+    facts: s.facts.map((f) => (f.id === "G1" ? { ...f, rev: f.rev + 1 } : f)),
+  };
+  assert.equal(setupUnlocked(changed, 4), false);
+  assert.match(
+    setupReadiness(changed).find((c) => c.id === "second-review").detail,
+    /changed since/,
+  );
+});
+
+test("a change while review is pending requires a fresh request", () => {
+  const asked = requestReview(readyForReview(), "Riley Kim");
+  const changed = {
+    ...asked,
+    facts: asked.facts.map((f) =>
+      f.id === "G1" ? { ...f, rev: f.rev + 1 } : f,
+    ),
+  };
+  const asRiley = setMe(changed, "t-riley");
+  assert.equal(decideReview(asRiley, "approve", ""), asRiley);
+  assert.equal(
+    myQueue(asRiley).some((q) => q.kind === "review"),
+    false,
+  );
+  assert.equal(canRequestReview(changed, "Sam Rivera").ok, true);
+  const renewed = requestReview(changed, "Sam Rivera");
+  assert.equal(renewed.review.round, 2);
+  assert.equal(renewed.review.reviewer, "Sam Rivera");
+  assert.equal(
+    decideReview(setMe(renewed, "t-sam"), "approve", "").review.status,
+    "Approved",
+  );
+});
+
+test("the reviewer cannot become the owner and sign off their own onboarding", () => {
+  const asked = requestReview(readyForReview(), "Riley Kim");
+  const reassigned = setOwner(asked, "Riley Kim");
+  const asRiley = setMe(reassigned, "t-riley");
+  assert.equal(decideReview(asRiley, "approve", ""), asRiley);
+  assert.equal(canRequestReview(asRiley, "Sam Rivera").ok, true);
+  const approved = reviewedBy(readyForReview());
+  assert.equal(setupUnlocked(setOwner(approved, "Riley Kim"), 4), false);
+});
+
+test("the review shows up in each person's queue and the handover note", () => {
+  const asked = requestReview(readyForReview(), "Riley Kim");
+  assert.deepEqual(
+    myQueue(setMe(asked, "t-riley")).map((i) => i.kind),
+    ["review"],
+  );
+  assert.ok(!myQueue(asked).some((i) => i.kind === "review"));
+  assert.ok(
+    nextActions(asked).some(
+      (a) => a.id === "review-details" && a.owner === "Riley Kim",
+    ),
+  );
+  const withNote = addNote(
+    asked,
+    { kind: "question", id: "q-emergency" },
+    "Customer sounded unsure on the call",
+  );
+  const text = handoverNote(withNote);
+  assert.match(text, /^Handover · Oakwood Property Group/);
+  assert.match(text, /Owner now: Avery Morgan/);
+  assert.ok(
+    text.includes("Second-person review: Requested (Riley Kim, round 1)"),
+  );
+  assert.match(text, /Customer sounded unsure on the call/);
+  assert.match(text, /Waived “/);
 });

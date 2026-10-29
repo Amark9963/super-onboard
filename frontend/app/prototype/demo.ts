@@ -5,6 +5,8 @@ import {
   consistencyReport,
   documentRequests,
   onboardingSteps,
+  reviewApproved,
+  reviewReady,
   type PrototypeState,
 } from "./state.ts";
 import type { Tab } from "./plan.ts";
@@ -87,9 +89,17 @@ export function tryItSteps(state: PrototypeState): TryStep[] {
       id: "approve",
       title: "Approve the answers and close the gaps",
       hint: "Back in Clarifications: approve each reply, and waive the open gaps with a reason.",
-      done: Boolean(steps && steps[2].status === "Done"),
+      done: reviewReady(state),
       needsClient: true,
       target: { kind: "client", tab: "clarifications" },
+    },
+    {
+      id: "review",
+      title: "Get a teammate’s review",
+      hint: "Requirements tab: ask Riley Kim to review. Then switch to Riley in the sidebar (Viewing as) and approve.",
+      done: reviewApproved(state),
+      needsClient: true,
+      target: { kind: "client", tab: "requirements" },
     },
     {
       id: "finish",
@@ -98,6 +108,15 @@ export function tryItSteps(state: PrototypeState): TryStep[] {
       done: Boolean(steps && steps.every((s) => s.status === "Done")),
       needsClient: true,
       target: { kind: "client", tab: "plan" },
+    },
+    {
+      id: "note",
+      title: "Leave a team note and mention someone",
+      hint: "Any question, detail or conflict has internal notes. Type @Riley to mention a teammate. Optional.",
+      done: state.notes.length > 0,
+      needsClient: true,
+      target: { kind: "client", tab: "requirements" },
+      optional: true,
     },
     {
       id: "team",

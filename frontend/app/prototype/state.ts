@@ -155,10 +155,42 @@ export type SentRequest = {
   questionIds: string[];
 };
 
+/** An internal comment from our team. The customer never sees these. */
+export type NoteTarget = {
+  kind: "fact" | "question" | "conflict" | "client";
+  id: string;
+};
+export type Note = {
+  id: number;
+  target: NoteTarget;
+  author: string;
+  text: string;
+  /** Names of the team members @mentioned in the text. */
+  mentions: string[];
+  at: string;
+  /** Mentioned people who have opened it. */
+  seenBy: string[];
+};
+/** A second team member's review of the approved details, before setup starts. */
+export type Review = {
+  status: "Requested" | "Approved" | "Changes requested";
+  reviewer: string;
+  requestedBy: string;
+  round: number;
+  reason: string;
+  /** The facts as they were when the reviewer decided; a later change makes the review stale. */
+  sig: string;
+  at: string;
+};
+
 export type PrototypeState = {
   client: Client | null;
   /** Our own team. Lives with the account, so it survives creating a new onboarding. */
   team: TeamMember[];
+  /** Id of the team member using the prototype (the sidebar can switch it, to try each role). */
+  me: string;
+  notes: Note[];
+  review: Review | null;
   facts: Fact[];
   questions: Question[];
   requests: SentRequest[];
@@ -781,7 +813,9 @@ const emptyFacts = (): Fact[] => [
   }),
 ];
 
-const freshOnboarding = (): Omit<PrototypeState, "client" | "team"> => ({
+const freshOnboarding = (): Omit<PrototypeState, "client" | "team" | "me"> => ({
+  notes: [],
+  review: null,
   facts: emptyFacts(),
   questions: [],
   requests: [],
@@ -800,6 +834,7 @@ const freshOnboarding = (): Omit<PrototypeState, "client" | "team"> => ({
 export const initialState: PrototypeState = {
   client: null,
   team: seedTeam,
+  me: "t-avery",
   ...freshOnboarding(),
 };
 
@@ -1597,6 +1632,14 @@ export function assignments(state: PrototypeState): Assignment[] {
   return out;
 }
 
+/** Clarification is finished apart from the review itself. */
+export function reviewReady(state: PrototypeState): boolean {
+  if (!state.client) return false;
+  return onboardingSteps(state)[2].pieces.every(
+    (p) => p.done || p.label === "Reviewed by a second team member",
+  );
+}
+
 // ---------------------------------------------------------------------------------------------
 // Next actions (the team's queue)
 // ---------------------------------------------------------------------------------------------
@@ -1678,6 +1721,39 @@ export function slackUpdate(state: PrototypeState): string {
     `Next: ${nextActions(state)[0]?.title ?? "launch checklist"}`,
   ].join("\n");
 }
+
+export const stamp = (clock: number) => {
+  const total = 9 * 60 + clock * 3;
+  const h = String(Math.floor(total / 60) % 24).padStart(2, "0");
+  const m = String(total % 60).padStart(2, "0");
+  return `Oct 29 · ${h}:${m}`;
+};
+
+// ---------------------------------------------------------------------------------------------
+// Second-person review
+// ---------------------------------------------------------------------------------------------
+
+/** What the reviewer is signing off on. Any change to a fact makes an earlier approval stale. */
+export const factsSignature = (state: PrototypeState) =>
+  state.facts
+    .map(
+      (f) =>
+        `${f.id}:${f.approval}:${f.rev}:${f.waived ? "w" : ""}:${shownValue(f) ?? ""}`,
+    )
+    .join("|");
+export const reviewApproved = (state: PrototypeState) =>
+  state.review?.status === "Approved" &&
+  state.review.reviewer !== state.client?.owner &&
+  state.review.sig === factsSignature(state);
+export const reviewStale = (state: PrototypeState) =>
+  state.review?.status === "Approved" &&
+  (state.review.reviewer === state.client?.owner ||
+    state.review.sig !== factsSignature(state));
+export const reviewRequestStale = (state: PrototypeState) =>
+  state.review?.status === "Requested" &&
+  (state.review.reviewer === state.client?.owner ||
+    state.review.requestedBy !== state.client?.owner ||
+    state.review.sig !== factsSignature(state));
 
 // ---------------------------------------------------------------------------------------------
 // Setup and go-live: the work that happens in the customer's agent platform. The prototype does not
@@ -1775,6 +1851,20 @@ export function setupReadiness(state: PrototypeState) {
       openQuestions.length === 0,
       openQuestions.length ? `${openQuestions.length} open.` : "All closed.",
     ),
+    item(
+      "second-review",
+      "Reviewed by a second team member",
+      reviewApproved(state),
+      reviewStale(state) || reviewRequestStale(state)
+        ? "Details or ownership changed since the review."
+        : state.review?.status === "Requested"
+          ? `Waiting for ${state.review.reviewer}.`
+          : state.review?.status === "Changes requested"
+            ? `${state.review.reviewer} asked for changes.`
+            : reviewApproved(state)
+              ? `Approved by ${state.review?.reviewer}.`
+              : "Not requested yet.",
+    ),
   ];
 }
 
@@ -1854,6 +1944,10 @@ export function onboardingSteps(state: PrototypeState): Step[] {
           done: prep.critical === 0,
         },
         { label: "Late documents reviewed", done: lateReviewed },
+        {
+          label: "Reviewed by a second team member",
+          done: reviewApproved(state),
+        },
       ],
     },
     {
@@ -2049,6 +2143,37 @@ export function nextActions(state: PrototypeState): NextAction[] {
       button: "Open",
       target: { stage: 3 },
     });
+  if (reviewReady(state) && !reviewApproved(state)) {
+    if (state.review?.status === "Requested" && !reviewRequestStale(state))
+      actions.push({
+        id: "review-details",
+        tone: "orange",
+        icon: "◉",
+        title: `Review the approved details for ${state.client.name}`,
+        subtitle: `Requested by ${state.review.requestedBy}. Second pair of eyes before setup.`,
+        due: "Before setup",
+        button: "Review",
+        target: { stage: 3 },
+        owner: state.review.reviewer,
+      });
+    else
+      a({
+        id: "request-review",
+        tone: "orange",
+        icon: "◉",
+        title:
+          state.review?.status === "Changes requested"
+            ? `Address ${state.review.reviewer}’s changes and ask for another review`
+            : "Ask a teammate to review the approved details",
+        subtitle:
+          reviewStale(state) || reviewRequestStale(state)
+            ? "Details or ownership changed after the last review"
+            : "Setup starts once someone else has signed off",
+        due: "Before setup",
+        button: "Open",
+        target: { stage: 3 },
+      });
+  }
   if (setupUnlocked(state, 4) && !setupDone(state, 4)) {
     const left = setupItems.filter(
       (i) => i.phase === 4 && !state.setup[i.id],

@@ -1,5 +1,6 @@
 "use client";
 
+import { Notes } from "./notes";
 import { useState } from "react";
 import {
   allSources,
@@ -432,6 +433,7 @@ function ConflictCard({
           </div>
         )}
       </footer>
+      <Notes ctx={ctx} target={{ kind: "conflict", id: c.id }} collapsed />
     </article>
   );
 }

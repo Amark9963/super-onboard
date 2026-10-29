@@ -2,13 +2,13 @@
 
 import { useEffect, useState } from "react";
 import {
-  assignments,
   createClient,
   initialState,
   type Client,
   type PrototypeState,
 } from "./state";
 import { diffActivity } from "./activity";
+import { me, myQueue, setMe } from "./collab";
 import { tabLabels, tabOrder, type Ctx, type View } from "./ui";
 import type { Tab } from "./plan";
 import Workspace from "./workspace";
@@ -110,7 +110,7 @@ export default function Prototype() {
   const guideSteps = tryItSteps(state).filter((x) => !x.optional);
   const guideDone = guideSteps.filter((x) => x.done).length;
   const guideTotal = guideSteps.length;
-  const teamOpen = assignments(state).filter((a) => a.side === "team").length;
+  const teamOpen = myQueue(state).length;
 
   return (
     <div className="v3 v3-app">
@@ -164,9 +164,30 @@ export default function Prototype() {
           <span className="ic">☷</span> Team
         </button>
         <div className="v3-userbox">
-          <Avatar2 />
+          <i className="v3-avatar team">
+            {(me(state)?.name ?? "?")
+              .split(" ")
+              .map((p) => p[0])
+              .join("")
+              .slice(0, 2)}
+          </i>
           <span>
-            <strong>Avery Morgan</strong>
+            <label className="v3-viewas">
+              <small>Viewing as</small>
+              <select
+                aria-label="Viewing as"
+                value={state.me}
+                onChange={(e) => update((s) => setMe(s, e.target.value))}
+              >
+                {state.team
+                  .filter((m) => m.status === "Active")
+                  .map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name} · {m.role}
+                    </option>
+                  ))}
+              </select>
+            </label>
             <button
               className="v3-link"
               onClick={() => {
@@ -309,8 +330,4 @@ export default function Prototype() {
       </div>
     </div>
   );
-}
-
-function Avatar2() {
-  return <i className="v3-avatar team">AM</i>;
 }

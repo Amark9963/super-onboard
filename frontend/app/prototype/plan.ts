@@ -9,6 +9,7 @@ import {
   documentRequests,
   factById,
   needsReview,
+  reviewApproved,
   setupItems,
   setupUnlocked,
   topicsCovered,
@@ -241,6 +242,28 @@ export function planTasks(state: PrototypeState): Task[] {
         due: "Nov 2",
         tab: "clarifications",
       });
+
+  // A second team member signs off on the approved details before setup starts.
+  const review = state.review;
+  add({
+    id: "p3-review",
+    phase: 3,
+    title: "Second-person review of the approved details",
+    side: "team",
+    assignee: review && review.status === "Requested" ? review.reviewer : owner,
+    role:
+      review && review.status === "Requested"
+        ? (state.team.find((m) => m.name === review.reviewer)?.role ??
+          "Reviewer")
+        : "Onboarding specialist",
+    status: reviewApproved(state)
+      ? "Done"
+      : review?.status === "Requested"
+        ? "In progress"
+        : "To do",
+    due: "Nov 9",
+    tab: "requirements",
+  });
 
   // Phases 4 and 5: the work happens in the customer's agent platform. We only track it.
   const dues: Record<string, string> = {

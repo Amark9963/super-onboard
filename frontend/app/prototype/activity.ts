@@ -2,22 +2,17 @@
 // Pure and deterministic. The shell wraps every update with diffActivity, so no action needs to
 // know about logging.
 
+import { targetLabel } from "./collab.ts";
 import {
   consistencyReport,
   contactByName,
   factById,
   setupItems,
   sourceCatalog,
+  stamp,
   type ActivityEvent,
   type PrototypeState,
 } from "./state.ts";
-
-const stamp = (clock: number) => {
-  const total = 9 * 60 + clock * 3;
-  const h = String(Math.floor(total / 60) % 24).padStart(2, "0");
-  const m = String(total % 60).padStart(2, "0");
-  return `Oct 29 · ${h}:${m}`;
-};
 
 type Actor = ActivityEvent["actor"];
 
@@ -147,6 +142,40 @@ export function diffActivity(
   for (const item of setupItems)
     if (next.setup[item.id] && !prev.setup[item.id])
       add(owner, `Completed: ${item.label}`, "setup");
+
+  for (const n of next.notes.filter(
+    (x) => !prev.notes.some((p) => p.id === x.id),
+  )) {
+    const where = targetLabel(next, n.target).label;
+    const quoted = n.text.length > 80 ? `${n.text.slice(0, 77)}…` : n.text;
+    add(
+      { name: n.author, side: "team" },
+      `left an internal note on “${where}”: “${quoted}”${n.mentions.length ? ` (mentioned ${n.mentions.join(", ")})` : ""}`,
+      "note",
+    );
+  }
+  const pr = prev.review;
+  const nr = next.review;
+  if (nr && (!pr || pr.status !== nr.status || pr.round !== nr.round)) {
+    if (nr.status === "Requested")
+      add(
+        { name: nr.requestedBy, side: "team" },
+        `asked ${nr.reviewer} to review the approved details (round ${nr.round})`,
+        "review-request",
+      );
+    else if (nr.status === "Approved")
+      add(
+        { name: nr.reviewer, side: "team" },
+        "approved the details after review",
+        "review-decision",
+      );
+    else
+      add(
+        { name: nr.reviewer, side: "team" },
+        `asked for changes: ${nr.reason}`,
+        "review-decision",
+      );
+  }
 
   if (!out.length) return next;
   const activity = [...next.activity];

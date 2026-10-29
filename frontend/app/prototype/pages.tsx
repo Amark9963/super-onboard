@@ -19,6 +19,7 @@ import {
 import { phaseNames, phaseProgress, planTasks } from "./plan";
 import { Avatar, Empty, Person, StatusDot, Tag, type Ctx } from "./ui";
 import { ContactCard, ContactForm } from "./contacts";
+import { markSeen, me, myQueue } from "./collab";
 
 /* ------------------------------------------------------------------ login */
 export function Login({ onSignIn }: { onSignIn: () => void }) {
@@ -54,7 +55,8 @@ export function Login({ onSignIn }: { onSignIn: () => void }) {
 
 /* ------------------------------------------------------------------ inbox */
 export function Inbox({ ctx }: { ctx: Ctx }) {
-  const { state, go } = ctx;
+  const { state, go, update } = ctx;
+  const [scope, setScope] = useState<"mine" | "team">("mine");
   if (!state.client)
     return (
       <Empty
@@ -78,6 +80,8 @@ export function Inbox({ ctx }: { ctx: Ctx }) {
   const waiting = tasks
     .filter((t) => t.side === "customer" && t.status !== "Done")
     .slice(0, 6);
+  const queue = myQueue(state);
+  const who = me(state);
   const recent = [...state.activity].reverse().slice(0, 7);
   return (
     <>
@@ -89,28 +93,91 @@ export function Inbox({ ctx }: { ctx: Ctx }) {
             happened.
           </p>
         </div>
+        <div className="v3-seg" role="group" aria-label="Whose work">
+          <button
+            className={scope === "mine" ? "active" : ""}
+            onClick={() => setScope("mine")}
+          >
+            Mine{queue.length ? ` · ${queue.length}` : ""}
+          </button>
+          <button
+            className={scope === "team" ? "active" : ""}
+            onClick={() => setScope("team")}
+          >
+            Whole team
+          </button>
+        </div>
       </div>
       <div className="v3-split">
         <div>
           <section className="v3-card">
-            <h3>Needs your attention</h3>
-            {mine.length === 0 && (
-              <p className="v3-muted">Nothing needs you right now.</p>
+            <h3>
+              {scope === "mine"
+                ? `Needs you, ${who?.name ?? ""}`
+                : "Needs our team"}
+            </h3>
+            {scope === "mine" && queue.length === 0 && (
+              <p className="v3-muted">
+                Nothing needs you right now. Reviews that are asked of you and
+                notes that mention you appear here.
+              </p>
             )}
-            {mine.map((t) => (
-              <div className="v3-task" key={t.id}>
-                <StatusDot status={t.status} />
-                <span className="title">
-                  {t.title}
-                  <small className="v3-muted block">{state.client!.name}</small>
-                </span>
-                <span className="side" />
-                <span className="due">{t.due}</span>
-                <button className="v3-link" onClick={() => go("client", t.tab)}>
-                  Open
-                </button>
-              </div>
-            ))}
+            {scope === "mine" &&
+              queue.map((q) => (
+                <div className="v3-task v3-queue" key={q.id}>
+                  <Tag
+                    kind={
+                      q.kind === "review"
+                        ? "amber"
+                        : q.kind === "mention"
+                          ? "blue"
+                          : "gray"
+                    }
+                  >
+                    {q.kind === "review"
+                      ? "Review"
+                      : q.kind === "mention"
+                        ? "Mention"
+                        : "Task"}
+                  </Tag>
+                  <span className="title">
+                    {q.title}
+                    <small className="v3-muted block">{q.detail}</small>
+                  </span>
+                  <button
+                    className="v3-link"
+                    onClick={() => {
+                      if (q.noteIds) update((s) => markSeen(s, q.noteIds!));
+                      go("client", q.tab);
+                    }}
+                  >
+                    Open
+                  </button>
+                </div>
+              ))}
+            {scope === "team" && mine.length === 0 && (
+              <p className="v3-muted">Nothing needs the team right now.</p>
+            )}
+            {scope === "team" &&
+              mine.map((t) => (
+                <div className="v3-task" key={t.id}>
+                  <StatusDot status={t.status} />
+                  <span className="title">
+                    {t.title}
+                    <small className="v3-muted block">
+                      {state.client!.name}
+                    </small>
+                  </span>
+                  <span className="side" />
+                  <span className="due">{t.due}</span>
+                  <button
+                    className="v3-link"
+                    onClick={() => go("client", t.tab)}
+                  >
+                    Open
+                  </button>
+                </div>
+              ))}
           </section>
           <section className="v3-card">
             <h3>Waiting on the customer</h3>
